@@ -14,21 +14,14 @@ const { join } = require('path');
 let SUPABASE_URL = null;
 let SUPABASE_KEY = null;
 const API_BASE_URL = 'https://noterelay.io';
-const BUILD_VERSION = '2024.12.16-1108';
+const BUILD_VERSION = '2024.12.16-1118';
 const CHUNK_SIZE = 16 * 1024;
 const DEFAULT_SETTINGS = {
   passwordHash: '',
-  localPort: 5474,
-  autoStartServer: true,
-  // SECURITY: CORS Settings
-  corsRestricted: true, // Secure by default
-  corsAllowedOrigins: '', // Custom domains only (e.g. https://my-proxy.com)
   // IDENTITY-BASED REMOTE ACCESS
   userEmail: '', // User's email address (subscription validation)
   masterPasswordHash: '', // Owner's override password
   vaultId: '', // Unique vault identifier (auto-generated)
-  guestList: [], // [{ userId, email, passHash, mode: 'rw'|'ro', label, status: 'pending'|'verified' }]
-  // ANALYTICS
 };
 
 async function hashString(str) {
@@ -37,10 +30,10 @@ async function hashString(str) {
   return Array.from(new Uint8Array(hashBuffer)).map((b) => b.toString(16).padStart(2, '0')).join('');
 }
 
-class MicroServer extends obsidian.Plugin {
+class NoteRelay extends obsidian.Plugin {
   async onload() {
     await this.loadSettings();
-    this.addSettingTab(new MicroServerSettingTab(this.app, this));
+    this.addSettingTab(new NoteRelaySettingTab(this.app, this));
 
     // BETA KILL SWITCH: Check if plugin is locked
     // Generate pluginId from vault path for license validation
@@ -79,11 +72,11 @@ class MicroServer extends obsidian.Plugin {
     this.statusBar = this.addStatusBarItem();
     this.isConnected = false;
 
-    // Auto-start server if enabled in settings (default true)
-    if (this.settings.autoStartServer !== false) {
+    // Auto-connect on plugin load
+    if (this.settings.autoConnect !== false) {
       this.connectSignaling();
     } else {
-      this.statusBar?.setText('Portal: Stopped');
+      this.statusBar?.setText('Note Relay: Stopped');
     }
 
     // Initialize heartbeat timestamp
@@ -199,9 +192,7 @@ class MicroServer extends obsidian.Plugin {
 
         // Capture license tier from server response
         if (result.planType) {
-          this.settings.licenseTier = result.planType;  // 'free', 'monthly', 'annual'
           await this.saveSettings();
-          console.log('License tier captured:', this.settings.licenseTier);
         }
 
         // Save the database vault ID and user ID for analytics
@@ -350,14 +341,14 @@ class MicroServer extends obsidian.Plugin {
 
     this.signalId = null; this.isConnected = false;
     if (this.statusBar) {
-      this.statusBar?.setText('Portal: Local Only');
+      this.statusBar?.setText('Note Relay: Disconnected');
       if (this.statusBar) this.statusBar.style.color = '';
     }
     console.log('Signaling disconnected. Offline mode.');
   }
 
   /**
-   * Unified command processor for both WebRTC and HTTP modes
+   * Unified command processor for WebRTC mode
    * @param {Object} msg - The command message { cmd, path, data }
    * @param {Function} sendCallback - Function to send response: (type, data, meta) => void
    */
@@ -595,7 +586,7 @@ class MicroServer extends obsidian.Plugin {
 
         const IMAGE_EXTS = ['png', 'jpg', 'jpeg', 'gif', 'svg', 'webp'];
         if (IMAGE_EXTS.includes(file.extension)) {
-          console.log(`Portal: Reading Image ${file.path}`);
+          console.log(`Note Relay: Reading Image ${file.path}`);
           const arrayBuffer = await this.app.vault.readBinary(file);
           const base64 = Buffer.from(arrayBuffer).toString('base64');
           sendCallback('FILE', base64, {
@@ -938,7 +929,7 @@ class MicroServer extends obsidian.Plugin {
       }
 
     } catch (error) {
-      console.error('Portal Command Error:', error);
+      console.error('Note Relay Command Error:', error);
       sendCallback('ERROR', { message: error.message });
     }
   }
@@ -977,7 +968,7 @@ class MicroServer extends obsidian.Plugin {
       let offset = 0;
 
       if (totalBytes > 100000) {
-        console.log(`Portal: Sending Large File (${Math.round(totalBytes / 1024)}KB)`);
+        console.log(`Note Relay: Sending Large File (${Math.round(totalBytes / 1024)}KB)`);
       }
 
       while (offset < totalBytes) {
@@ -998,7 +989,7 @@ class MicroServer extends obsidian.Plugin {
     });
 
     peer.on('connect', () => {
-      this.statusBar?.setText('Portal: Verifying...');
+      this.statusBar?.setText('Note Relay: Verifying...');
 
       // Record WebRTC session start
       if (false /* analytics removed */) {
@@ -1177,13 +1168,13 @@ class MicroServer extends obsidian.Plugin {
         await this.processCommand(msg, wrappedSendCallback);
 
       } catch (e) {
-        console.error('Portal Error', e);
+        console.error('Note Relay Error', e);
       }
     });
 
     peer.on('close', () => {
       new obsidian.Notice('Client Disconnected');
-      this.statusBar?.setText('Portal: Active');
+      this.statusBar?.setText('Note Relay: Active');
       if (this.statusBar) this.statusBar.style.color = '';
 
       // Record WebRTC session end
@@ -1193,7 +1184,7 @@ class MicroServer extends obsidian.Plugin {
 
     peer.on('error', (err) => {
       console.error('Peer error:', err);
-      this.statusBar?.setText('Portal: Error');
+      this.statusBar?.setText('Note Relay: Error');
 
       // Record error event
       if (false /* analytics removed */) {
@@ -1318,10 +1309,10 @@ class MicroServer extends obsidian.Plugin {
     const ID = signalId || 'host';
 
     if (signalId) {
-      this.statusBar?.setText(`Portal: Pro Active (${ID.slice(0, 8)}...)`);
+      this.statusBar?.setText(`Note Relay: Pro Active (${ID.slice(0, 8)}...)`);
       if (this.statusBar) this.statusBar.style.color = '#7c4dff';
     } else {
-      this.statusBar?.setText(`Portal: Active`);
+      this.statusBar?.setText(`Note Relay: Active`);
     }
 
     console.log('🎧 Host listening for offers with filter: target=eq.' + ID);
@@ -1508,14 +1499,13 @@ class MicroServer extends obsidian.Plugin {
 
   /**
    * Zero-Knowledge Audit Log
-   * Logs access events locally (console for Phase 1, file in Phase 3)
    * @param {string} userIdentifier - Email or userId of accessor
    * @param {string} action - Action performed (READ, WRITE, DELETE, etc.)
    * @param {string} target - File path or resource accessed
    */
 }
 
-class MicroServerSettingTab extends obsidian.PluginSettingTab {
+class NoteRelaySettingTab extends obsidian.PluginSettingTab {
   constructor(app, plugin) {
     super(app, plugin);
     this.plugin = plugin;
@@ -1650,4 +1640,4 @@ class MicroServerSettingTab extends obsidian.PluginSettingTab {
   }
 }
 
-module.exports = MicroServer;
+module.exports = NoteRelay;
