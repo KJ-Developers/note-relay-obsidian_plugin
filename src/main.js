@@ -16,6 +16,7 @@ const API_BASE_URL = 'https://noterelay.io';
 const BUILD_VERSION = '2024.12.16-1421';
 const CHUNK_SIZE = 16 * 1024;
 const DEFAULT_SETTINGS = {
+  enableRemoteAccess: false,
   passwordHash: '',
   // IDENTITY-BASED REMOTE ACCESS
   userEmail: '', // User's email address (subscription validation)
@@ -78,7 +79,7 @@ class NoteRelay extends obsidian.Plugin {
     console.log('Note Relay: Wake detection enabled');
 
     // Only auto-connect if fully configured (email + password)
-    if (this.settings.userEmail && this.settings.masterPasswordHash) {
+    if (this.settings.enableRemoteAccess && this.settings.userEmail && this.settings.masterPasswordHash) {
       setTimeout(() => this.connectSignaling(), 1000);
     } else {
       this.statusBar?.setText('Note Relay: Not configured');
@@ -1166,6 +1167,11 @@ class NoteRelay extends obsidian.Plugin {
   }
 
   async connectSignaling() {
+    // CONSENT CHECK: Only connect if user has enabled remote access
+    if (!this.settings.enableRemoteAccess) {
+      console.log('Note Relay: Remote access disabled. Staying offline.');
+      return;
+    }
     // SECURITY CHECK: Do not connect to Supabase if no email is present.
     if (!this.settings.userEmail) {
       console.log('Note Relay: No user email found. Staying offline (Local Mode only).');
@@ -1213,7 +1219,7 @@ class NoteRelay extends obsidian.Plugin {
 
     // Check if we have user email for remote access
     let signalId = null;
-    if (this.settings.userEmail && this.settings.masterPasswordHash) {
+    if (this.settings.enableRemoteAccess && this.settings.userEmail && this.settings.masterPasswordHash) {
       signalId = await this.registerVaultAndGetSignalId();
     }
 
@@ -1428,9 +1434,24 @@ class NoteRelaySettingTab extends obsidian.PluginSettingTab {
     containerEl.empty();
 
     containerEl.createEl('h2', { text: 'Note Relay Configuration' });
+    // STEP 1: CONSENT
+    containerEl.createEl('h3', { text: '1️⃣ Enable Remote Access' });
+    new obsidian.Setting(containerEl)
+      .setName('I agree to enable remote access')
+      .setDesc('This plugin connects to noterelay.io servers every 5 minutes (heartbeat) to allow remote vault access.')
+      .addToggle(toggle => toggle
+        .setValue(this.plugin.settings.enableRemoteAccess)
+        .onChange(async (value) => {
+          this.plugin.settings.enableRemoteAccess = value;
+          await this.plugin.saveSettings();
+          if (!value) {
+            this.plugin.disconnectSignaling();
+          }
+          this.display();
+        }));
 
-    // Step 1: Email Account
-    containerEl.createEl('h3', { text: '1️⃣ Account' });
+    // Step 2: Email Account
+    containerEl.createEl('h3', { text: '2️⃣ Account' });
 
     new obsidian.Setting(containerEl)
       .setName('Email Address')
@@ -1484,7 +1505,7 @@ class NoteRelaySettingTab extends obsidian.PluginSettingTab {
     }
 
     // Step 2: Vault Password
-    containerEl.createEl('h3', { text: '2️⃣ Vault Password' });
+    containerEl.createEl('h3', { text: '3️⃣ Vault Password' });
 
     new obsidian.Setting(containerEl)
       .setName('Remote Vault Password')
@@ -1511,17 +1532,19 @@ class NoteRelaySettingTab extends obsidian.PluginSettingTab {
     passStatus.setText(this.plugin.settings.masterPasswordHash ? '✅ Password is set' : '⚠️ Password required');
 
     // Step 3: Connect Relay
-    containerEl.createEl('h3', { text: '3️⃣ Connect Relay' });
+    containerEl.createEl('h3', { text: '4️⃣ Connect Relay' });
 
-    const canStart = this.plugin.settings.emailValidated && this.plugin.settings.masterPasswordHash;
+    const canStart = this.plugin.settings.enableRemoteAccess && this.plugin.settings.emailValidated && this.plugin.settings.masterPasswordHash;
 
     if (!canStart) {
       const warningDiv = containerEl.createDiv();
       warningDiv.style.cssText = 'padding: 15px; margin-bottom: 15px; background: rgba(255,152,0,0.1); border-left: 3px solid #ff9800; border-radius: 4px;';
-      if (!this.plugin.settings.emailValidated) {
-        warningDiv.innerHTML = '<strong>⚠️ Step 1 incomplete</strong><br>Enter a valid noterelay.io email and press Tab.';
+      if (!this.plugin.settings.enableRemoteAccess) {
+        warningDiv.innerHTML = '<strong>⚠️ Step 1 incomplete</strong><br>Enable remote access above.';
+      } else if (!this.plugin.settings.emailValidated) {
+        warningDiv.innerHTML = '<strong>⚠️ Step 2 incomplete</strong><br>Enter a valid noterelay.io email and press Tab.';
       } else {
-        warningDiv.innerHTML = '<strong>⚠️ Step 2 incomplete</strong><br>Set a vault password.';
+        warningDiv.innerHTML = '<strong>⚠️ Step 3 incomplete</strong><br>Set a vault password.';
       }
     }
 
