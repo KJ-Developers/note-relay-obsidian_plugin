@@ -80,7 +80,7 @@ class NoteRelay extends obsidian.Plugin {
 
     // Only auto-connect if fully configured (email + password)
     if (this.settings.enableRemoteAccess && this.settings.userEmail && this.settings.masterPasswordHash) {
-      setTimeout(() => this.connectSignaling(), 1000);
+      setTimeout(() => this.connectSignaling(), 3000); // 3s delay for cold start
     } else {
       this.statusBar?.setText('Note Relay: Not configured');
     }
@@ -312,49 +312,63 @@ class NoteRelay extends obsidian.Plugin {
    * @param {Object} msg - The command message { cmd, path, data }
    * @param {Function} sendCallback - Function to send response: (type, data, meta) => void
    */
+
+  // ============================================
+  // COMMAND HANDLERS (Wave 1: Simple)
+  // ============================================
+
+  async _handlePing(msg, sendCallback) {
+    console.log('🔒 Server PING/HANDSHAKE received');
+    const themeCSS = this.extractThemeCSS();
+    sendCallback(msg.cmd === 'PING' ? 'PONG' : 'HANDSHAKE_ACK', {
+      version: BUILD_VERSION,
+      readOnly: false,
+      css: themeCSS
+    });
+  }
+
+  async _handleGetTree(sendCallback) {
+    const files = this.app.vault.getMarkdownFiles().map((f) => {
+      const cache = this.app.metadataCache.getFileCache(f);
+      let tags = [], links = [];
+      if (cache) {
+        if (cache.frontmatter?.tags) {
+          let ft = cache.frontmatter.tags;
+          if (!Array.isArray(ft)) ft = [ft];
+          ft.forEach((t) => tags.push(t.startsWith('#') ? t : '#' + t));
+        }
+        if (cache.tags) cache.tags.forEach((t) => tags.push(t.tag));
+        if (cache.links) cache.links.forEach((l) => links.push(l.link));
+      }
+      return { path: f.path, tags: [...new Set(tags)], links: [...new Set(links)] };
+    });
+
+    // Get all folders including empty ones
+    const allFolders = [];
+    const getAllFolders = (folder) => {
+      folder.children.forEach(child => {
+        if (child.children) {
+          allFolders.push(child.path);
+          getAllFolders(child);
+        }
+      });
+    };
+    getAllFolders(this.app.vault.getRoot());
+
+    const treeCss = this.extractThemeCSS();
+    sendCallback('TREE', { files, folders: allFolders, css: treeCss });
+  }
+
   async processCommand(msg, sendCallback, isReadOnly = false) {
+    // TODO: Implement Challenge-Response Auth (Nonce) for V2
     try {
       if (msg.cmd === 'PING' || msg.cmd === 'HANDSHAKE') {
-        console.log('🔒 Server PING/HANDSHAKE received');
-        const themeCSS = this.extractThemeCSS();
-        sendCallback(msg.cmd === 'PING' ? 'PONG' : 'HANDSHAKE_ACK', {
-          version: BUILD_VERSION,
-          readOnly: false,
-          css: themeCSS
-        });
+        await this._handlePing(msg, sendCallback);
         return;
       }
 
       if (msg.cmd === 'GET_TREE') {
-        const files = this.app.vault.getMarkdownFiles().map((f) => {
-          const cache = this.app.metadataCache.getFileCache(f);
-          let tags = [], links = [];
-          if (cache) {
-            if (cache.frontmatter?.tags) {
-              let ft = cache.frontmatter.tags;
-              if (!Array.isArray(ft)) ft = [ft];
-              ft.forEach((t) => tags.push(t.startsWith('#') ? t : '#' + t));
-            }
-            if (cache.tags) cache.tags.forEach((t) => tags.push(t.tag));
-            if (cache.links) cache.links.forEach((l) => links.push(l.link));
-          }
-          return { path: f.path, tags: [...new Set(tags)], links: [...new Set(links)] };
-        });
-
-        // Get all folders including empty ones
-        const allFolders = [];
-        const getAllFolders = (folder) => {
-          folder.children.forEach(child => {
-            if (child.children) {
-              allFolders.push(child.path);
-              getAllFolders(child);
-            }
-          });
-        };
-        getAllFolders(this.app.vault.getRoot());
-
-        const treeCss = this.extractThemeCSS();
-        sendCallback('TREE', { files, folders: allFolders, css: treeCss });
+        await this._handleGetTree(sendCallback);
         return;
       }
 
