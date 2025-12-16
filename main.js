@@ -19321,14 +19321,11 @@ var NoteRelay = class extends obsidian.Plugin {
       console.log("Generated new vaultId:", this.settings.vaultId);
     }
     console.log("Plugin ID:", this.pluginId);
-    let nodeId = window.localStorage.getItem("note-relay-node-id");
-    if (!nodeId) {
-      nodeId = crypto.randomUUID();
-      window.localStorage.setItem("note-relay-node-id", nodeId);
-      console.log("Generated new Machine ID (Node ID):", nodeId);
-    }
-    this.nodeId = nodeId;
-    console.log("Machine Identity:", this.nodeId);
+    const fingerprint = vaultPath + "|" + os.platform() + "|" + os.hostname();
+    this.nodeId = await hashString(fingerprint);
+    this.nodeName = os.hostname();
+    this.nodePlatform = os.platform();
+    console.log("Note Relay: Device -", this.nodePlatform, "/", this.nodeName);
     console.log(`%c PORTAL ${BUILD_VERSION} READY`, "color: #00ff00; font-weight: bold; background: #000;");
     this.statusBar = this.addStatusBarItem();
     this.isConnected = false;
@@ -19372,7 +19369,7 @@ var NoteRelay = class extends obsidian.Plugin {
       return null;
     }
     try {
-      const os = require("os");
+      const os2 = require("os");
       const response = await fetch("https://noterelay.io/api/vaults?route=register", {
         method: "POST",
         headers: {
@@ -19384,9 +19381,9 @@ var NoteRelay = class extends obsidian.Plugin {
           vaultId: this.settings.vaultId,
           signalId: this.pluginId,
           vaultName: this.app.vault.getName(),
-          hostname: os.hostname(),
+          hostname: os2.hostname(),
           nodeId: this.nodeId,
-          machineName: os.hostname()
+          machineName: os2.hostname()
         })
       });
       if (!response.ok) {
@@ -19442,7 +19439,7 @@ var NoteRelay = class extends obsidian.Plugin {
         const data = await response.json();
         if (data.iceServers) {
           this.iceServers = data.iceServers;
-          console.log("\u2705 Host TURN credentials obtained");
+          console.log("Note Relay: TURN credentials obtained");
         }
       } else {
         const errorText = await response.text();
@@ -19530,7 +19527,6 @@ var NoteRelay = class extends obsidian.Plugin {
   // COMMAND HANDLERS (Wave 1: Simple)
   // ============================================
   async _handlePing(msg, sendCallback) {
-    console.log("\u{1F512} Server PING/HANDSHAKE received");
     const themeCSS = this.extractThemeCSS();
     sendCallback(msg.cmd === "PING" ? "PONG" : "HANDSHAKE_ACK", {
       version: BUILD_VERSION,
@@ -19859,7 +19855,6 @@ var NoteRelay = class extends obsidian.Plugin {
   // COMMAND HANDLERS (Wave 4: Special)
   // ============================================
   async _handleOpenFile(msg, sendCallback, isReadOnly) {
-    var _a;
     const safePath = this.sanitizePath(msg.path);
     if (!safePath) {
       sendCallback("ERROR", { message: "Invalid path" });
@@ -19891,44 +19886,25 @@ var NoteRelay = class extends obsidian.Plugin {
     }
     const workspace = this.app.workspace;
     let kanbanLeaf = workspace.getLeavesOfType("kanban")[0];
-    console.log("\u{1F50D} OPEN_FILE Debug:", {
-      detectedPlugin,
-      hasKanbanLeaf: !!kanbanLeaf,
-      allLeafTypes: workspace.getLeavesOfType("kanban").length,
-      allLeaves: this.app.workspace.getLeavesOfType("markdown").map((l) => l.getViewState().type)
-    });
     if (!kanbanLeaf) {
       try {
-        console.log("\u{1F513} Attempting to open file in new leaf...");
         const newLeaf = workspace.getLeaf("tab");
         await newLeaf.openFile(file);
-        console.log("\u2705 File opened, view type:", newLeaf.getViewState().type);
         if (newLeaf.getViewState().type === "kanban") {
           kanbanLeaf = newLeaf;
-          console.log("\u2705 Kanban view detected!");
         } else {
-          console.warn("\u26A0\uFE0F View type is not kanban:", newLeaf.getViewState().type);
         }
       } catch (openError) {
-        console.error("\u274C Failed to open file:", openError);
       }
     } else {
       try {
-        console.log("\u{1F504} Kanban leaf exists, forcing refresh...");
         await kanbanLeaf.openFile(file);
         await new Promise((resolve) => setTimeout(resolve, 150));
       } catch (refreshError) {
-        console.error("\u274C Failed to refresh kanban leaf:", refreshError);
       }
     }
-    console.log("\u{1F3AF} Attempting to extract HTML, kanbanLeaf exists:", !!kanbanLeaf);
     if (kanbanLeaf) {
       const view = kanbanLeaf.view;
-      console.log("\u{1F50D} View check:", {
-        hasView: !!view,
-        hasContainerEl: !!(view == null ? void 0 : view.containerEl),
-        containerClasses: (_a = view == null ? void 0 : view.containerEl) == null ? void 0 : _a.className
-      });
       if (view.containerEl) {
         let kanbanBoard = null;
         let attempts = 0;
@@ -19936,45 +19912,25 @@ var NoteRelay = class extends obsidian.Plugin {
         while (!kanbanBoard && attempts < maxAttempts) {
           if (attempts > 0) {
             await new Promise((resolve) => setTimeout(resolve, 100 * attempts));
-            console.log(`\u23F3 Retry ${attempts}/${maxAttempts} - waiting for Kanban DOM...`);
           }
           kanbanBoard = view.containerEl.querySelector(".kanban-plugin");
           attempts++;
         }
-        console.log("\u{1F50D} Kanban board element:", {
-          found: !!kanbanBoard,
-          attempts,
-          selector: ".kanban-plugin",
-          containerHTML: view.containerEl.innerHTML.substring(0, 500)
-        });
         if (kanbanBoard) {
           const capturedHTML = kanbanBoard.outerHTML;
-          console.log("\u{1F3A8} ========== KANBAN CAPTURE DEBUG ==========");
-          console.log("\u{1F4CF} HTML length:", capturedHTML.length);
-          console.log("\u{1F4DD} HTML preview (first 1000 chars):", capturedHTML.substring(0, 1e3));
-          console.log("\u{1F4DD} HTML preview (last 500 chars):", capturedHTML.substring(capturedHTML.length - 500));
           const kanbanCSS = this.extractPluginCSS(".kanban-plugin");
-          console.log("\u{1F3A8} CSS length:", kanbanCSS.length);
-          console.log("\u{1F3A8} CSS preview (first 2000 chars):", kanbanCSS.substring(0, 2e3));
-          console.log("\u{1F3A8} CSS rule count:", (kanbanCSS.match(/\{/g) || []).length);
           const response = {
             renderedHTML: capturedHTML,
             pluginCSS: kanbanCSS,
             viewType: "kanban",
             success: true
           };
-          console.log("\u{1F4E6} Response object keys:", Object.keys(response));
-          console.log("\u{1F4E6} Response.renderedHTML length:", response.renderedHTML.length);
-          console.log("\u{1F4E6} Response.pluginCSS length:", response.pluginCSS.length);
-          console.log("\u{1F3A8} ========== END CAPTURE DEBUG ==========");
           sendCallback("OPEN_FILE", response, { path: safePath });
           kanbanLeaf.detach();
-          console.log("\u{1F5D1}\uFE0F Closed Kanban leaf");
           return;
         }
       }
     }
-    console.warn("\u26A0\uFE0F Falling back to markdown rendering (no Kanban HTML captured)");
     await this._handleGetRenderedFile({
       cmd: "GET_RENDERED_FILE",
       path: safePath
@@ -20001,11 +19957,9 @@ var NoteRelay = class extends obsidian.Plugin {
         sendCallback("ERROR", { message: "No file opened after daily notes command" });
         return;
       }
-      console.log("\u{1F4C5} Daily note created/opened:", activeFile.path);
       const activeLeaf = this.app.workspace.getLeaf(false);
       if (activeLeaf) {
         activeLeaf.detach();
-        console.log("\u{1F5D1}\uFE0F Closed daily note leaf");
       }
       const response = { success: true, path: activeFile.path };
       sendCallback("OPEN_DAILY_NOTE", response);
@@ -20132,9 +20086,9 @@ var NoteRelay = class extends obsidian.Plugin {
                 accessGranted = true;
                 isReadOnly = false;
                 userIdentifier = this.settings.userEmail;
-                console.log("\u2705 WebRTC: Owner authenticated -", userIdentifier);
+                console.log("Note Relay: Owner authenticated");
               } else {
-                console.log("\u274C WebRTC: Owner password incorrect");
+                console.log("Note Relay: Access denied");
                 peer.safeSend({ type: "ERROR", message: "ACCESS_DENIED: Invalid password." });
                 setTimeout(() => peer.destroy(), 1e3);
                 return;
