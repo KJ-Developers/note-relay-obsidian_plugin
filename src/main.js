@@ -368,24 +368,10 @@ class NoteRelay extends obsidian.Plugin {
         let file = this.app.vault.getAbstractFileByPath(safePath);
         let shouldRefreshTree = msg.refreshTree || false;
 
-        // AUTO-CREATE MISSING FILE (Ghost Link Support)
+        // SECURITY: Do not auto-create missing files (Ghost File vulnerability fixed)
         if (!file) {
-          // BLOCK GHOST CREATION IN READ-ONLY MODE
-          if (isReadOnly) {
-            console.log('🔒 Ghost Link blocked - read-only mode');
-            sendCallback('ERROR', { message: 'READ-ONLY MODE: Cannot create new file.' });
-            return;
-          }
-          try {
-            console.log('Ghost Link: Creating missing file', safePath);
-            file = await this.app.vault.create(safePath, '');
-            new obsidian.Notice(`Created: ${safePath}`);
-            shouldRefreshTree = true; // FORCE REFRESH
-          } catch (err) {
-            console.error('Ghost Create Failed:', err);
-            sendCallback('ERROR', { message: `Could not create '${safePath}'. Ensure folder exists.` });
-            return;
-          }
+          sendCallback('ERROR', { message: 'File not found' });
+          return;
         }
 
         try {
