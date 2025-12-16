@@ -19567,8 +19567,454 @@ var NoteRelay = class extends obsidian.Plugin {
     const treeCss = this.extractThemeCSS();
     sendCallback("TREE", { files, folders: allFolders, css: treeCss });
   }
+  // ============================================
+  // COMMAND HANDLERS (Wave 2: Read)
+  // ============================================
+  async _handleGetRenderedFile(msg, sendCallback, isReadOnly) {
+    const safePath = this.sanitizePath(msg.path);
+    if (!safePath) {
+      sendCallback("ERROR", { message: "Invalid path" });
+      return;
+    }
+    let file = this.app.vault.getAbstractFileByPath(safePath);
+    let shouldRefreshTree = msg.refreshTree || false;
+    if (!file) {
+      sendCallback("ERROR", { message: "File not found" });
+      return;
+    }
+    try {
+      const content = await this.app.vault.read(file);
+      let yamlData = null;
+      let contentWithoutYaml = content;
+      const yamlMatch = content.match(/^---\n([\s\S]*?)\n---\n?/);
+      if (yamlMatch) {
+        const yamlText = yamlMatch[1];
+        try {
+          const cache2 = this.app.metadataCache.getFileCache(file);
+          if (cache2 && cache2.frontmatter) {
+            yamlData = { ...cache2.frontmatter };
+            delete yamlData.position;
+          }
+          contentWithoutYaml = content.slice(yamlMatch[0].length);
+        } catch (err) {
+          console.warn("Invalid YAML frontmatter:", err);
+        }
+      }
+      const div = document.createElement("div");
+      await obsidian.MarkdownRenderer.render(this.app, contentWithoutYaml, div, file.path, this);
+      await this.waitForRender(div);
+      const themeCSS = this.extractThemeCSS();
+      const graphData = { nodes: [], edges: [] };
+      const currentPath = msg.path;
+      const backlinks = [];
+      graphData.nodes.push({ id: currentPath, label: file.basename, group: "center" });
+      const cache = this.app.metadataCache.getFileCache(file);
+      if (cache && cache.links) {
+        cache.links.forEach((l) => {
+          const linkPath = l.link;
+          if (!graphData.nodes.find((n) => n.id === linkPath)) {
+            graphData.nodes.push({ id: linkPath, label: linkPath.split("/").pop().replace(".md", ""), group: "neighbor" });
+          }
+          graphData.edges.push({ from: currentPath, to: linkPath });
+        });
+      }
+      const allLinks = this.app.metadataCache.resolvedLinks;
+      for (const sourcePath in allLinks) {
+        if (allLinks[sourcePath][currentPath]) {
+          backlinks.push(sourcePath);
+          if (!graphData.nodes.find((n) => n.id === sourcePath)) {
+            graphData.nodes.push({ id: sourcePath, label: sourcePath.split("/").pop().replace(".md", ""), group: "neighbor" });
+          }
+          graphData.edges.push({ from: sourcePath, to: currentPath });
+        }
+      }
+      const assets = div.querySelectorAll("img, embed, object, iframe");
+      for (const el of assets) {
+        let src = el.getAttribute("src") || el.getAttribute("data");
+        if (src && src.startsWith("app://")) {
+          try {
+            const container = el.closest(".internal-embed");
+            let targetFile = null;
+            if (container && container.getAttribute("src")) {
+              const linktext = container.getAttribute("src");
+              targetFile = this.app.metadataCache.getFirstLinkpathDest(linktext, file.path);
+            }
+            if (targetFile) {
+              const arrayBuffer = await this.app.vault.readBinary(targetFile);
+              const base64 = import_buffer.Buffer.from(arrayBuffer).toString("base64");
+              const ext = targetFile.extension;
+              const mime = this.getMimeType(ext);
+              if (el.tagName.toLowerCase() === "img") {
+                el.src = `data:${mime};base64,${base64}`;
+                el.removeAttribute("srcset");
+              } else {
+                const dataUri = `data:${mime};base64,${base64}`;
+                if (el.hasAttribute("src")) el.setAttribute("src", dataUri);
+                if (el.hasAttribute("data")) el.setAttribute("data", dataUri);
+              }
+            }
+          } catch (assetError) {
+            console.error("Failed to process asset:", src, assetError);
+          }
+        }
+      }
+      const response = {
+        html: div.innerHTML,
+        yaml: yamlData,
+        css: themeCSS,
+        backlinks,
+        graph: graphData
+      };
+      if (shouldRefreshTree) {
+        response.files = this.app.vault.getFiles().map((f) => ({
+          path: f.path,
+          name: f.name,
+          basename: f.basename,
+          extension: f.extension
+        }));
+      }
+      sendCallback("RENDERED_FILE", response, { path: safePath });
+    } catch (renderError) {
+      console.error("Render Error:", renderError);
+      sendCallback("ERROR", { message: "Rendering failed: " + renderError.message });
+    }
+  }
+  async _handleGetFile(msg, sendCallback) {
+    const safePath = this.sanitizePath(msg.path);
+    if (!safePath) {
+      sendCallback("ERROR", { message: "Invalid path" });
+      return;
+    }
+    const file = this.app.vault.getAbstractFileByPath(safePath);
+    if (!file) {
+      sendCallback("ERROR", { message: "File not found" });
+      return;
+    }
+    const IMAGE_EXTS = ["png", "jpg", "jpeg", "gif", "svg", "webp"];
+    if (IMAGE_EXTS.includes(file.extension.toLowerCase())) {
+      console.log(`Note Relay: Reading Image ${file.path}`);
+      const arrayBuffer = await this.app.vault.readBinary(file);
+      if (msg.options && msg.options.resize) {
+        try {
+          const blob = new Blob([arrayBuffer]);
+          const bitmap = await createImageBitmap(blob);
+          const MAX_WIDTH = 800;
+          let width = bitmap.width;
+          let height = bitmap.height;
+          if (width > MAX_WIDTH) {
+            height = Math.round(height * (MAX_WIDTH / width));
+            width = MAX_WIDTH;
+          }
+          const canvas = document.createElement("canvas");
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext("2d");
+          ctx.drawImage(bitmap, 0, 0, width, height);
+          const dataUrl = canvas.toDataURL("image/jpeg", 0.8);
+          const base642 = dataUrl.split(",")[1];
+          sendCallback("FILE", base642, {
+            path: msg.path,
+            isImage: true,
+            ext: "jpg",
+            // Thumbnails are always JPEGs
+            originalExt: file.extension
+          });
+          return;
+        } catch (err) {
+          console.error("Image resize failed, falling back to full size:", err);
+        }
+      }
+      const base64 = import_buffer.Buffer.from(arrayBuffer).toString("base64");
+      sendCallback("FILE", base64, {
+        path: msg.path,
+        isImage: true,
+        ext: file.extension
+      });
+    } else if (file.extension === "md") {
+      const content = await this.app.vault.read(file);
+      const backlinks = [];
+      const resolved = this.app.metadataCache.resolvedLinks;
+      for (const [sourcePath, links] of Object.entries(resolved)) {
+        if (links[msg.path]) backlinks.push(sourcePath);
+      }
+      sendCallback("FILE", {
+        data: content,
+        backlinks
+      }, { path: msg.path });
+    } else {
+      console.log(`Note Relay: Reading Binary File ${file.path}`);
+      const arrayBuffer = await this.app.vault.readBinary(file);
+      const base64 = import_buffer.Buffer.from(arrayBuffer).toString("base64");
+      sendCallback("FILE", base64, {
+        path: msg.path,
+        isBinary: true,
+        ext: file.extension
+      });
+    }
+  }
+  // ============================================
+  // COMMAND HANDLERS (Wave 3: Write)
+  // ============================================
+  async _handleSaveFile(msg, sendCallback, isReadOnly) {
+    if (isReadOnly) {
+      sendCallback("ERROR", { message: "Read-only mode" });
+      return;
+    }
+    const safePath = this.sanitizePath(msg.path);
+    if (!safePath) {
+      sendCallback("ERROR", { message: "Invalid path" });
+      return;
+    }
+    const file = this.app.vault.getAbstractFileByPath(safePath);
+    if (!file) {
+      sendCallback("ERROR", { message: "File not found" });
+      return;
+    }
+    await this.app.vault.modify(file, msg.data);
+    sendCallback("SAVED", { path: safePath });
+    new obsidian.Notice(`Saved: ${safePath}`);
+  }
+  async _handleCreateFile(msg, sendCallback, isReadOnly) {
+    if (isReadOnly) {
+      sendCallback("ERROR", { message: "Read-only mode" });
+      return;
+    }
+    const safePath = this.sanitizePath(msg.path);
+    if (!safePath) {
+      sendCallback("ERROR", { message: "Invalid path" });
+      return;
+    }
+    const file = this.app.vault.getAbstractFileByPath(safePath);
+    if (file) {
+      sendCallback("ERROR", { message: "File already exists" });
+      return;
+    }
+    await this.app.vault.create(safePath, "");
+    new obsidian.Notice(`Created: ${safePath}`);
+    await this._handleGetRenderedFile({
+      cmd: "GET_RENDERED_FILE",
+      path: safePath,
+      refreshTree: true
+    }, sendCallback, isReadOnly);
+  }
+  async _handleCreateFolder(msg, sendCallback, isReadOnly) {
+    if (isReadOnly) {
+      sendCallback("ERROR", { message: "Read-only mode" });
+      return;
+    }
+    const safePath = this.sanitizePath(msg.path);
+    if (!safePath) {
+      sendCallback("ERROR", { message: "Invalid path" });
+      return;
+    }
+    const file = this.app.vault.getAbstractFileByPath(safePath);
+    if (file) {
+      sendCallback("ERROR", { message: "Folder already exists" });
+      return;
+    }
+    await this.app.vault.createFolder(safePath);
+    sendCallback("SAVED", { path: safePath });
+    new obsidian.Notice(`Created Folder: ${safePath}`);
+  }
+  async _handleRenameFile(msg, sendCallback, isReadOnly) {
+    if (isReadOnly) {
+      sendCallback("ERROR", { message: "Read-only mode" });
+      return;
+    }
+    const safePath = this.sanitizePath(msg.path);
+    const safeNewPath = this.sanitizePath(msg.data.newPath);
+    if (!safePath || !safeNewPath) {
+      sendCallback("ERROR", { message: "Invalid path" });
+      return;
+    }
+    const file = this.app.vault.getAbstractFileByPath(safePath);
+    if (!file) {
+      sendCallback("ERROR", { message: "File not found" });
+      return;
+    }
+    await this.app.fileManager.renameFile(file, safeNewPath);
+    sendCallback("SAVED", { path: safeNewPath });
+    new obsidian.Notice(`Renamed: ${safePath} to ${safeNewPath}`);
+  }
+  async _handleDeleteFile(msg, sendCallback, isReadOnly) {
+    if (isReadOnly) {
+      sendCallback("ERROR", { message: "Read-only mode" });
+      return;
+    }
+    const safePath = this.sanitizePath(msg.path);
+    if (!safePath) {
+      sendCallback("ERROR", { message: "Invalid path" });
+      return;
+    }
+    const file = this.app.vault.getAbstractFileByPath(safePath);
+    if (!file) {
+      sendCallback("ERROR", { message: "File not found" });
+      return;
+    }
+    await this.app.vault.trash(file, true);
+    sendCallback("SAVED", { path: safePath });
+    new obsidian.Notice(`Deleted: ${safePath}`);
+  }
+  // ============================================
+  // COMMAND HANDLERS (Wave 4: Special)
+  // ============================================
+  async _handleOpenFile(msg, sendCallback, isReadOnly) {
+    var _a;
+    const safePath = this.sanitizePath(msg.path);
+    if (!safePath) {
+      sendCallback("ERROR", { message: "Invalid path" });
+      return;
+    }
+    const file = this.app.vault.getAbstractFileByPath(safePath);
+    if (!file) {
+      sendCallback("ERROR", { message: "File not found" });
+      return;
+    }
+    const metadata = this.app.metadataCache.getFileCache(file);
+    const frontmatter = (metadata == null ? void 0 : metadata.frontmatter) || {};
+    let detectedPlugin = null;
+    if (frontmatter["kanban-plugin"]) detectedPlugin = "kanban";
+    else if (frontmatter["dataview"]) detectedPlugin = "dataview";
+    else if (frontmatter["excalidraw-plugin"]) detectedPlugin = "excalidraw";
+    if (!detectedPlugin) {
+      await this._handleGetRenderedFile({
+        cmd: "GET_RENDERED_FILE",
+        path: safePath
+      }, (type, data, meta) => {
+        if (type === "RENDERED_FILE") {
+          sendCallback("OPEN_FILE", data, meta);
+        } else {
+          sendCallback(type, data, meta);
+        }
+      }, isReadOnly);
+      return;
+    }
+    const workspace = this.app.workspace;
+    let kanbanLeaf = workspace.getLeavesOfType("kanban")[0];
+    console.log("\u{1F50D} OPEN_FILE Debug:", {
+      detectedPlugin,
+      hasKanbanLeaf: !!kanbanLeaf,
+      allLeafTypes: workspace.getLeavesOfType("kanban").length,
+      allLeaves: this.app.workspace.getLeavesOfType("markdown").map((l) => l.getViewState().type)
+    });
+    if (!kanbanLeaf) {
+      try {
+        console.log("\u{1F513} Attempting to open file in new leaf...");
+        const newLeaf = workspace.getLeaf("tab");
+        await newLeaf.openFile(file);
+        console.log("\u2705 File opened, view type:", newLeaf.getViewState().type);
+        if (newLeaf.getViewState().type === "kanban") {
+          kanbanLeaf = newLeaf;
+          console.log("\u2705 Kanban view detected!");
+        } else {
+          console.warn("\u26A0\uFE0F View type is not kanban:", newLeaf.getViewState().type);
+        }
+      } catch (openError) {
+        console.error("\u274C Failed to open file:", openError);
+      }
+    } else {
+      try {
+        console.log("\u{1F504} Kanban leaf exists, forcing refresh...");
+        await kanbanLeaf.openFile(file);
+        await new Promise((resolve) => setTimeout(resolve, 150));
+      } catch (refreshError) {
+        console.error("\u274C Failed to refresh kanban leaf:", refreshError);
+      }
+    }
+    console.log("\u{1F3AF} Attempting to extract HTML, kanbanLeaf exists:", !!kanbanLeaf);
+    if (kanbanLeaf) {
+      const view = kanbanLeaf.view;
+      console.log("\u{1F50D} View check:", {
+        hasView: !!view,
+        hasContainerEl: !!(view == null ? void 0 : view.containerEl),
+        containerClasses: (_a = view == null ? void 0 : view.containerEl) == null ? void 0 : _a.className
+      });
+      if (view.containerEl) {
+        let kanbanBoard = null;
+        let attempts = 0;
+        const maxAttempts = 5;
+        while (!kanbanBoard && attempts < maxAttempts) {
+          if (attempts > 0) {
+            await new Promise((resolve) => setTimeout(resolve, 100 * attempts));
+            console.log(`\u23F3 Retry ${attempts}/${maxAttempts} - waiting for Kanban DOM...`);
+          }
+          kanbanBoard = view.containerEl.querySelector(".kanban-plugin");
+          attempts++;
+        }
+        console.log("\u{1F50D} Kanban board element:", {
+          found: !!kanbanBoard,
+          attempts,
+          selector: ".kanban-plugin",
+          containerHTML: view.containerEl.innerHTML.substring(0, 500)
+        });
+        if (kanbanBoard) {
+          const capturedHTML = kanbanBoard.outerHTML;
+          console.log("\u{1F3A8} ========== KANBAN CAPTURE DEBUG ==========");
+          console.log("\u{1F4CF} HTML length:", capturedHTML.length);
+          console.log("\u{1F4DD} HTML preview (first 1000 chars):", capturedHTML.substring(0, 1e3));
+          console.log("\u{1F4DD} HTML preview (last 500 chars):", capturedHTML.substring(capturedHTML.length - 500));
+          const kanbanCSS = this.extractPluginCSS(".kanban-plugin");
+          console.log("\u{1F3A8} CSS length:", kanbanCSS.length);
+          console.log("\u{1F3A8} CSS preview (first 2000 chars):", kanbanCSS.substring(0, 2e3));
+          console.log("\u{1F3A8} CSS rule count:", (kanbanCSS.match(/\{/g) || []).length);
+          const response = {
+            renderedHTML: capturedHTML,
+            pluginCSS: kanbanCSS,
+            viewType: "kanban",
+            success: true
+          };
+          console.log("\u{1F4E6} Response object keys:", Object.keys(response));
+          console.log("\u{1F4E6} Response.renderedHTML length:", response.renderedHTML.length);
+          console.log("\u{1F4E6} Response.pluginCSS length:", response.pluginCSS.length);
+          console.log("\u{1F3A8} ========== END CAPTURE DEBUG ==========");
+          sendCallback("OPEN_FILE", response, { path: safePath });
+          kanbanLeaf.detach();
+          console.log("\u{1F5D1}\uFE0F Closed Kanban leaf");
+          return;
+        }
+      }
+    }
+    console.warn("\u26A0\uFE0F Falling back to markdown rendering (no Kanban HTML captured)");
+    await this._handleGetRenderedFile({
+      cmd: "GET_RENDERED_FILE",
+      path: safePath
+    }, (type, data, meta) => {
+      if (type === "RENDERED_FILE") {
+        sendCallback("OPEN_FILE", data, meta);
+      } else {
+        sendCallback(type, data, meta);
+      }
+    }, isReadOnly);
+  }
+  async _handleOpenDailyNote(msg, sendCallback) {
+    var _a, _b;
+    try {
+      const dailyNotesPlugin = (_b = (_a = this.app.internalPlugins) == null ? void 0 : _a.plugins) == null ? void 0 : _b["daily-notes"];
+      if (!dailyNotesPlugin || !dailyNotesPlugin.enabled) {
+        sendCallback("ERROR", { message: "Daily Notes plugin is not enabled in Obsidian" });
+        return;
+      }
+      this.app.commands.executeCommandById("daily-notes");
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      const activeFile = this.app.workspace.getActiveFile();
+      if (!activeFile) {
+        sendCallback("ERROR", { message: "No file opened after daily notes command" });
+        return;
+      }
+      console.log("\u{1F4C5} Daily note created/opened:", activeFile.path);
+      const activeLeaf = this.app.workspace.getLeaf(false);
+      if (activeLeaf) {
+        activeLeaf.detach();
+        console.log("\u{1F5D1}\uFE0F Closed daily note leaf");
+      }
+      const response = { success: true, path: activeFile.path };
+      sendCallback("OPEN_DAILY_NOTE", response);
+    } catch (error) {
+      console.error("Daily Note Error:", error);
+      sendCallback("ERROR", { message: "Failed to open daily note: " + error.message });
+    }
+  }
   async processCommand(msg, sendCallback, isReadOnly = false) {
-    var _a, _b, _c;
     try {
       if (msg.cmd === "PING" || msg.cmd === "HANDSHAKE") {
         await this._handlePing(msg, sendCallback);
@@ -19579,425 +20025,39 @@ var NoteRelay = class extends obsidian.Plugin {
         return;
       }
       if (msg.cmd === "GET_RENDERED_FILE") {
-        const safePath = this.sanitizePath(msg.path);
-        if (!safePath) {
-          sendCallback("ERROR", { message: "Invalid path" });
-          return;
-        }
-        let file = this.app.vault.getAbstractFileByPath(safePath);
-        let shouldRefreshTree = msg.refreshTree || false;
-        if (!file) {
-          sendCallback("ERROR", { message: "File not found" });
-          return;
-        }
-        try {
-          const content = await this.app.vault.read(file);
-          let yamlData = null;
-          let contentWithoutYaml = content;
-          const yamlMatch = content.match(/^---\n([\s\S]*?)\n---\n?/);
-          if (yamlMatch) {
-            const yamlText = yamlMatch[1];
-            try {
-              const cache2 = this.app.metadataCache.getFileCache(file);
-              if (cache2 && cache2.frontmatter) {
-                yamlData = { ...cache2.frontmatter };
-                delete yamlData.position;
-              }
-              contentWithoutYaml = content.slice(yamlMatch[0].length);
-            } catch (err) {
-              console.warn("Invalid YAML frontmatter:", err);
-            }
-          }
-          const div = document.createElement("div");
-          await obsidian.MarkdownRenderer.render(this.app, contentWithoutYaml, div, file.path, this);
-          await this.waitForRender(div);
-          const themeCSS = this.extractThemeCSS();
-          const graphData = { nodes: [], edges: [] };
-          const currentPath = msg.path;
-          const backlinks = [];
-          graphData.nodes.push({ id: currentPath, label: file.basename, group: "center" });
-          const cache = this.app.metadataCache.getFileCache(file);
-          if (cache && cache.links) {
-            cache.links.forEach((l) => {
-              const linkPath = l.link;
-              if (!graphData.nodes.find((n) => n.id === linkPath)) {
-                graphData.nodes.push({ id: linkPath, label: linkPath.split("/").pop().replace(".md", ""), group: "neighbor" });
-              }
-              graphData.edges.push({ from: currentPath, to: linkPath });
-            });
-          }
-          const allLinks = this.app.metadataCache.resolvedLinks;
-          for (const sourcePath in allLinks) {
-            if (allLinks[sourcePath][currentPath]) {
-              backlinks.push(sourcePath);
-              if (!graphData.nodes.find((n) => n.id === sourcePath)) {
-                graphData.nodes.push({ id: sourcePath, label: sourcePath.split("/").pop().replace(".md", ""), group: "neighbor" });
-              }
-              graphData.edges.push({ from: sourcePath, to: currentPath });
-            }
-          }
-          const assets = div.querySelectorAll("img, embed, object, iframe");
-          for (const el of assets) {
-            let src = el.getAttribute("src") || el.getAttribute("data");
-            if (src && src.startsWith("app://")) {
-              try {
-                const container = el.closest(".internal-embed");
-                let targetFile = null;
-                if (container && container.getAttribute("src")) {
-                  const linktext = container.getAttribute("src");
-                  targetFile = this.app.metadataCache.getFirstLinkpathDest(linktext, file.path);
-                }
-                if (targetFile) {
-                  const arrayBuffer = await this.app.vault.readBinary(targetFile);
-                  const base64 = import_buffer.Buffer.from(arrayBuffer).toString("base64");
-                  const ext = targetFile.extension;
-                  const mime = this.getMimeType(ext);
-                  if (el.tagName.toLowerCase() === "img") {
-                    el.src = `data:${mime};base64,${base64}`;
-                    el.removeAttribute("srcset");
-                  } else {
-                    const dataUri = `data:${mime};base64,${base64}`;
-                    if (el.hasAttribute("src")) el.setAttribute("src", dataUri);
-                    if (el.hasAttribute("data")) el.setAttribute("data", dataUri);
-                  }
-                }
-              } catch (assetError) {
-                console.error("Failed to process asset:", src, assetError);
-              }
-            }
-          }
-          const response = {
-            html: div.innerHTML,
-            yaml: yamlData,
-            css: themeCSS,
-            backlinks,
-            graph: graphData
-          };
-          if (shouldRefreshTree) {
-            response.files = this.app.vault.getFiles().map((f) => ({
-              path: f.path,
-              name: f.name,
-              basename: f.basename,
-              extension: f.extension
-            }));
-          }
-          sendCallback("RENDERED_FILE", response, { path: safePath });
-        } catch (renderError) {
-          console.error("Render Error:", renderError);
-          sendCallback("ERROR", { message: "Rendering failed: " + renderError.message });
-        }
+        await this._handleGetRenderedFile(msg, sendCallback, isReadOnly);
         return;
       }
       if (msg.cmd === "GET_FILE") {
-        const safePath = this.sanitizePath(msg.path);
-        if (!safePath) {
-          sendCallback("ERROR", { message: "Invalid path" });
-          return;
-        }
-        const file = this.app.vault.getAbstractFileByPath(safePath);
-        if (!file) {
-          sendCallback("ERROR", { message: "File not found" });
-          return;
-        }
-        const IMAGE_EXTS = ["png", "jpg", "jpeg", "gif", "svg", "webp"];
-        if (IMAGE_EXTS.includes(file.extension.toLowerCase())) {
-          console.log(`Note Relay: Reading Image ${file.path}`);
-          const arrayBuffer = await this.app.vault.readBinary(file);
-          if (msg.options && msg.options.resize) {
-            try {
-              const blob = new Blob([arrayBuffer]);
-              const bitmap = await createImageBitmap(blob);
-              const MAX_WIDTH = 800;
-              let width = bitmap.width;
-              let height = bitmap.height;
-              if (width > MAX_WIDTH) {
-                height = Math.round(height * (MAX_WIDTH / width));
-                width = MAX_WIDTH;
-              }
-              const canvas = document.createElement("canvas");
-              canvas.width = width;
-              canvas.height = height;
-              const ctx = canvas.getContext("2d");
-              ctx.drawImage(bitmap, 0, 0, width, height);
-              const dataUrl = canvas.toDataURL("image/jpeg", 0.8);
-              const base642 = dataUrl.split(",")[1];
-              sendCallback("FILE", base642, {
-                path: msg.path,
-                isImage: true,
-                ext: "jpg",
-                // Thumbnails are always JPEGs
-                originalExt: file.extension
-              });
-              return;
-            } catch (err) {
-              console.error("Image resize failed, falling back to full size:", err);
-            }
-          }
-          const base64 = import_buffer.Buffer.from(arrayBuffer).toString("base64");
-          sendCallback("FILE", base64, {
-            path: msg.path,
-            isImage: true,
-            ext: file.extension
-          });
-        } else if (file.extension === "md") {
-          const content = await this.app.vault.read(file);
-          const backlinks = [];
-          const resolved = this.app.metadataCache.resolvedLinks;
-          for (const [sourcePath, links] of Object.entries(resolved)) {
-            if (links[msg.path]) backlinks.push(sourcePath);
-          }
-          sendCallback("FILE", {
-            data: content,
-            backlinks
-          }, { path: msg.path });
-        } else {
-          console.log(`Note Relay: Reading Binary File ${file.path}`);
-          const arrayBuffer = await this.app.vault.readBinary(file);
-          const base64 = import_buffer.Buffer.from(arrayBuffer).toString("base64");
-          sendCallback("FILE", base64, {
-            path: msg.path,
-            isBinary: true,
-            ext: file.extension
-          });
-        }
+        await this._handleGetFile(msg, sendCallback);
         return;
       }
       if (msg.cmd === "SAVE_FILE") {
-        const safePath = this.sanitizePath(msg.path);
-        if (!safePath) {
-          sendCallback("ERROR", { message: "Invalid path" });
-          return;
-        }
-        const file = this.app.vault.getAbstractFileByPath(safePath);
-        if (!file) {
-          sendCallback("ERROR", { message: "File not found" });
-          return;
-        }
-        await this.app.vault.modify(file, msg.data);
-        if (false) {
-        }
-        sendCallback("SAVED", { path: safePath });
-        new obsidian.Notice(`Saved: ${safePath}`);
+        await this._handleSaveFile(msg, sendCallback, isReadOnly);
         return;
       }
       if (msg.cmd === "CREATE_FILE") {
-        const safePath = this.sanitizePath(msg.path);
-        if (!safePath) {
-          sendCallback("ERROR", { message: "Invalid path" });
-          return;
-        }
-        const file = this.app.vault.getAbstractFileByPath(safePath);
-        if (file) {
-          sendCallback("ERROR", { message: "File already exists" });
-          return;
-        }
-        await this.app.vault.create(safePath, "");
-        new obsidian.Notice(`Created: ${safePath}`);
-        await this.processCommand({
-          cmd: "GET_RENDERED_FILE",
-          path: safePath,
-          refreshTree: true
-        }, sendCallback);
+        await this._handleCreateFile(msg, sendCallback, isReadOnly);
         return;
       }
       if (msg.cmd === "CREATE_FOLDER") {
-        const safePath = this.sanitizePath(msg.path);
-        if (!safePath) {
-          sendCallback("ERROR", { message: "Invalid path" });
-          return;
-        }
-        const file = this.app.vault.getAbstractFileByPath(safePath);
-        if (file) {
-          sendCallback("ERROR", { message: "Folder already exists" });
-          return;
-        }
-        await this.app.vault.createFolder(safePath);
-        sendCallback("SAVED", { path: safePath });
-        new obsidian.Notice(`Created Folder: ${safePath}`);
+        await this._handleCreateFolder(msg, sendCallback, isReadOnly);
         return;
       }
       if (msg.cmd === "RENAME_FILE") {
-        const safePath = this.sanitizePath(msg.path);
-        const safeNewPath = this.sanitizePath(msg.data.newPath);
-        if (!safePath || !safeNewPath) {
-          sendCallback("ERROR", { message: "Invalid path" });
-          return;
-        }
-        const file = this.app.vault.getAbstractFileByPath(safePath);
-        if (!file) {
-          sendCallback("ERROR", { message: "File not found" });
-          return;
-        }
-        await this.app.fileManager.renameFile(file, safeNewPath);
-        sendCallback("SAVED", { path: safeNewPath });
-        new obsidian.Notice(`Renamed: ${safePath} to ${safeNewPath}`);
+        await this._handleRenameFile(msg, sendCallback, isReadOnly);
         return;
       }
       if (msg.cmd === "DELETE_FILE") {
-        const safePath = this.sanitizePath(msg.path);
-        if (!safePath) {
-          sendCallback("ERROR", { message: "Invalid path" });
-          return;
-        }
-        const file = this.app.vault.getAbstractFileByPath(safePath);
-        if (!file) {
-          sendCallback("ERROR", { message: "File not found" });
-          return;
-        }
-        await this.app.vault.trash(file, true);
-        sendCallback("SAVED", { path: safePath });
-        new obsidian.Notice(`Deleted: ${safePath}`);
+        await this._handleDeleteFile(msg, sendCallback, isReadOnly);
         return;
       }
       if (msg.cmd === "OPEN_FILE") {
-        const safePath = this.sanitizePath(msg.path);
-        if (!safePath) {
-          sendCallback("ERROR", { message: "Invalid path" });
-          return;
-        }
-        const file = this.app.vault.getAbstractFileByPath(safePath);
-        if (!file) {
-          sendCallback("ERROR", { message: "File not found" });
-          return;
-        }
-        const metadata = this.app.metadataCache.getFileCache(file);
-        const frontmatter = (metadata == null ? void 0 : metadata.frontmatter) || {};
-        let detectedPlugin = null;
-        if (frontmatter["kanban-plugin"]) detectedPlugin = "kanban";
-        else if (frontmatter["dataview"]) detectedPlugin = "dataview";
-        else if (frontmatter["excalidraw-plugin"]) detectedPlugin = "excalidraw";
-        if (!detectedPlugin) {
-          this.processCommand({
-            cmd: "GET_RENDERED_FILE",
-            path: safePath
-          }, sendCallback);
-          return;
-        }
-        const workspace = this.app.workspace;
-        let kanbanLeaf = workspace.getLeavesOfType("kanban")[0];
-        console.log("\u{1F50D} OPEN_FILE Debug:", {
-          detectedPlugin,
-          hasKanbanLeaf: !!kanbanLeaf,
-          allLeafTypes: workspace.getLeavesOfType("kanban").length,
-          allLeaves: this.app.workspace.getLeavesOfType("markdown").map((l) => l.getViewState().type)
-        });
-        if (!kanbanLeaf) {
-          try {
-            console.log("\u{1F513} Attempting to open file in new leaf...");
-            const newLeaf = workspace.getLeaf("tab");
-            await newLeaf.openFile(file);
-            console.log("\u2705 File opened, view type:", newLeaf.getViewState().type);
-            if (newLeaf.getViewState().type === "kanban") {
-              kanbanLeaf = newLeaf;
-              console.log("\u2705 Kanban view detected!");
-            } else {
-              console.warn("\u26A0\uFE0F View type is not kanban:", newLeaf.getViewState().type);
-            }
-          } catch (openError) {
-            console.error("\u274C Failed to open file:", openError);
-          }
-        } else {
-          try {
-            console.log("\u{1F504} Kanban leaf exists, forcing refresh...");
-            await kanbanLeaf.openFile(file);
-            await new Promise((resolve) => setTimeout(resolve, 150));
-          } catch (refreshError) {
-            console.error("\u274C Failed to refresh kanban leaf:", refreshError);
-          }
-        }
-        console.log("\u{1F3AF} Attempting to extract HTML, kanbanLeaf exists:", !!kanbanLeaf);
-        if (kanbanLeaf) {
-          const view = kanbanLeaf.view;
-          console.log("\u{1F50D} View check:", {
-            hasView: !!view,
-            hasContainerEl: !!(view == null ? void 0 : view.containerEl),
-            containerClasses: (_a = view == null ? void 0 : view.containerEl) == null ? void 0 : _a.className
-          });
-          if (view.containerEl) {
-            let kanbanBoard = null;
-            let attempts = 0;
-            const maxAttempts = 5;
-            while (!kanbanBoard && attempts < maxAttempts) {
-              if (attempts > 0) {
-                await new Promise((resolve) => setTimeout(resolve, 100 * attempts));
-                console.log(`\u23F3 Retry ${attempts}/${maxAttempts} - waiting for Kanban DOM...`);
-              }
-              kanbanBoard = view.containerEl.querySelector(".kanban-plugin");
-              attempts++;
-            }
-            console.log("\u{1F50D} Kanban board element:", {
-              found: !!kanbanBoard,
-              attempts,
-              selector: ".kanban-plugin",
-              containerHTML: view.containerEl.innerHTML.substring(0, 500)
-            });
-            if (kanbanBoard) {
-              const capturedHTML = kanbanBoard.outerHTML;
-              console.log("\u{1F3A8} ========== KANBAN CAPTURE DEBUG ==========");
-              console.log("\u{1F4CF} HTML length:", capturedHTML.length);
-              console.log("\u{1F4DD} HTML preview (first 1000 chars):", capturedHTML.substring(0, 1e3));
-              console.log("\u{1F4DD} HTML preview (last 500 chars):", capturedHTML.substring(capturedHTML.length - 500));
-              const kanbanCSS = this.extractPluginCSS(".kanban-plugin");
-              console.log("\u{1F3A8} CSS length:", kanbanCSS.length);
-              console.log("\u{1F3A8} CSS preview (first 2000 chars):", kanbanCSS.substring(0, 2e3));
-              console.log("\u{1F3A8} CSS rule count:", (kanbanCSS.match(/\{/g) || []).length);
-              const response = {
-                renderedHTML: capturedHTML,
-                pluginCSS: kanbanCSS,
-                viewType: "kanban",
-                success: true
-              };
-              console.log("\u{1F4E6} Response object keys:", Object.keys(response));
-              console.log("\u{1F4E6} Response.renderedHTML length:", response.renderedHTML.length);
-              console.log("\u{1F4E6} Response.pluginCSS length:", response.pluginCSS.length);
-              console.log("\u{1F3A8} ========== END CAPTURE DEBUG ==========");
-              sendCallback("OPEN_FILE", response, { path: safePath });
-              kanbanLeaf.detach();
-              console.log("\u{1F5D1}\uFE0F Closed Kanban leaf");
-              return;
-            }
-          }
-        }
-        console.warn("\u26A0\uFE0F Falling back to markdown rendering (no Kanban HTML captured)");
-        const wrapperCallback = (type, data, meta) => {
-          if (type === "RENDERED_FILE") {
-            sendCallback("OPEN_FILE", data, meta);
-          } else {
-            sendCallback(type, data, meta);
-          }
-        };
-        this.processCommand({
-          cmd: "GET_RENDERED_FILE",
-          path: safePath
-        }, wrapperCallback);
+        await this._handleOpenFile(msg, sendCallback, isReadOnly);
         return;
       }
       if (msg.cmd === "OPEN_DAILY_NOTE") {
-        try {
-          const dailyNotesPlugin = (_c = (_b = this.app.internalPlugins) == null ? void 0 : _b.plugins) == null ? void 0 : _c["daily-notes"];
-          if (!dailyNotesPlugin || !dailyNotesPlugin.enabled) {
-            sendCallback("ERROR", { message: "Daily Notes plugin is not enabled in Obsidian" });
-            return;
-          }
-          this.app.commands.executeCommandById("daily-notes");
-          await new Promise((resolve) => setTimeout(resolve, 300));
-          const activeFile = this.app.workspace.getActiveFile();
-          if (!activeFile) {
-            sendCallback("ERROR", { message: "No file opened after daily notes command" });
-            return;
-          }
-          console.log("\u{1F4C5} Daily note created/opened:", activeFile.path);
-          const activeLeaf = this.app.workspace.getLeaf(false);
-          if (activeLeaf) {
-            activeLeaf.detach();
-            console.log("\u{1F5D1}\uFE0F Closed daily note leaf");
-          }
-          const response = { success: true, path: activeFile.path };
-          sendCallback("OPEN_DAILY_NOTE", response);
-        } catch (error) {
-          console.error("Daily Note Error:", error);
-          sendCallback("ERROR", { message: "Failed to open daily note: " + error.message });
-        }
+        await this._handleOpenDailyNote(msg, sendCallback);
         return;
       }
     } catch (error) {
