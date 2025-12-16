@@ -13,10 +13,9 @@ const { join } = require('path');
 let SUPABASE_URL = null;
 let SUPABASE_KEY = null;
 const API_BASE_URL = 'https://noterelay.io';
-const BUILD_VERSION = '2024.12.16-1521';
+const BUILD_VERSION = '2024.12.16-1421';
 const CHUNK_SIZE = 16 * 1024;
 const DEFAULT_SETTINGS = {
-  enableRemoteAccess: false,
   passwordHash: '',
   // IDENTITY-BASED REMOTE ACCESS
   userEmail: '', // User's email address (subscription validation)
@@ -79,8 +78,7 @@ class NoteRelay extends obsidian.Plugin {
     console.log('Note Relay: Wake detection enabled');
 
     // Only auto-connect if fully configured (email + password)
-    // Only auto-connect if enabled AND fully configured
-    if (this.settings.enableRemoteAccess && this.settings.userEmail && this.settings.masterPasswordHash) {
+    if (this.settings.userEmail && this.settings.masterPasswordHash) {
       setTimeout(() => this.connectSignaling(), 1000);
     } else {
       this.statusBar?.setText('Note Relay: Not configured');
@@ -316,51 +314,1107 @@ class NoteRelay extends obsidian.Plugin {
   async processCommand(msg, sendCallback, isReadOnly = false) {
     try {
       if (msg.cmd === 'PING' || msg.cmd === 'HANDSHAKE') {
-        // TODO: Implement Challenge-Response Auth (Nonce) for V2
         console.log('🔒 Server PING/HANDSHAKE received');
+        const themeCSS = this.extractThemeCSS();
         sendCallback(msg.cmd === 'PING' ? 'PONG' : 'HANDSHAKE_ACK', {
           version: BUILD_VERSION,
-          vaultName: this.app.vault.getName()
+          readOnly: false,
+          css: themeCSS
         });
         return;
       }
 
-      console.log('Note Relay Command:', msg.cmd, msg.path || '');
+      if (msg.cmd === 'GET_TREE') {
+        const files = this.app.vault.getMarkdownFiles().map((f) => {
+          const cache = this.app.metadataCache.getFileCache(f);
+          let tags = [], links = [];
+          if (cache) {
+            if (cache.frontmatter?.tags) {
+              let ft = cache.frontmatter.tags;
+              if (!Array.isArray(ft)) ft = [ft];
+              ft.forEach((t) => tags.push(t.startsWith('#') ? t : '#' + t));
+            }
+            if (cache.tags) cache.tags.forEach((t) => tags.push(t.tag));
+            if (cache.links) cache.links.forEach((l) => links.push(l.link));
+          }
+          return { path: f.path, tags: [...new Set(tags)], links: [...new Set(links)] };
+        });
 
-      switch (msg.cmd) {
-        case 'GET_TREE':
-          await this.handleGetTree(sendCallback);
-          break;
-        case 'GET_RENDERED_FILE':
-          await this.handleGetRenderedFile(msg, sendCallback, isReadOnly);
-          break;
-        case 'GET_FILE':
-          await this.handleGetFile(msg, sendCallback);
-          break;
-        case 'SAVE_FILE':
-          await this.handleSaveFile(msg, sendCallback, isReadOnly);
-          break;
-        case 'CREATE_FILE':
-          await this.handleCreateFile(msg, sendCallback, isReadOnly);
-          break;
-        case 'DELETE_FILE':
-          await this.handleDeleteFile(msg, sendCallback, isReadOnly);
-          break;
-        case 'RENAME_FILE':
-          await this.handleRenameFile(msg, sendCallback, isReadOnly);
-          break;
-        case 'OPEN_FILE':
-          await this.handleOpenFile(msg, sendCallback);
-          break;
-        default:
-          console.warn('Unknown command:', msg.cmd);
-          sendCallback('ERROR', { message: 'Unknown command' });
+        // Get all folders including empty ones
+        const allFolders = [];
+        const getAllFolders = (folder) => {
+          folder.children.forEach(child => {
+            if (child.children) {
+              allFolders.push(child.path);
+              getAllFolders(child);
+            }
+          });
+        };
+        getAllFolders(this.app.vault.getRoot());
+
+        const treeCss = this.extractThemeCSS();
+        sendCallback('TREE', { files, folders: allFolders, css: treeCss });
+        return;
       }
-    } catch (e) {
-      console.error('Note Relay Error', e);
-      sendCallback('ERROR', { message: e.message });
+
+      if (msg.cmd === 'GET_RENDERED_FILE') {
+        const safePath = this.sanitizePath(msg.path);
+        if (!safePath) {
+          sendCallback('ERROR', { message: 'Invalid path' });
+          return;
+        }
+
+        let file = this.app.vault.getAbstractFileByPath(safePath);
+        let shouldRefreshTree = msg.refreshTree || false;
+
+        // AUTO-CREATE MISSING FILE (Ghost Link Support)
+        if (!file) {
+          // BLOCK GHOST CREATION IN READ-ONLY MODE
+          if (isReadOnly) {
+            console.log('🔒 Ghost Link blocked - read-only mode');
+            sendCallback('ERROR', { message: 'READ-ONLY MODE: Cannot create new file.' });
+            return;
+          }
+          try {
+            console.log('Ghost Link: Creating missing file', safePath);
+            file = await this.app.vault.create(safePath, '');
+            new obsidian.Notice(`Created: ${safePath}`);
+            shouldRefreshTree = true; // FORCE REFRESH
+          } catch (err) {
+            console.error('Ghost Create Failed:', err);
+            sendCallback('ERROR', { message: `Could not create '${safePath}'. Ensure folder exists.` });
+            return;
+          }
+        }
+
+        try {
+          const content = await this.app.vault.read(file);
+
+          // Extract YAML frontmatter
+          let yamlData = null;
+          let contentWithoutYaml = content;
+          const yamlMatch = content.match(/^---\n([\s\S]*?)\n---\n?/);
+
+          if (yamlMatch) {
+            const yamlText = yamlMatch[1];
+            try {
+              // Parse YAML to object (Obsidian's parser handles it)
+              const cache = this.app.metadataCache.getFileCache(file);
+              if (cache && cache.frontmatter) {
+                yamlData = { ...cache.frontmatter };
+                delete yamlData.position; // Remove metadata
+              }
+              contentWithoutYaml = content.slice(yamlMatch[0].length);
+            } catch (err) {
+              console.warn('Invalid YAML frontmatter:', err);
+            }
+          }
+
+          const div = document.createElement('div');
+
+          // Render Markdown WITHOUT frontmatter
+          await obsidian.MarkdownRenderer.render(this.app, contentWithoutYaml, div, file.path, this);
+
+          // Smart Rendering: Wait for Dataview/Plugins to settle
+          await this.waitForRender(div);
+
+          // Extract CSS
+          const themeCSS = this.extractThemeCSS();
+
+          // 6. GRAPH & BACKLINKS DATA
+          const graphData = { nodes: [], edges: [] };
+          const currentPath = msg.path;
+          const backlinks = [];
+
+          // Add Central Node
+          graphData.nodes.push({ id: currentPath, label: file.basename, group: 'center' });
+
+          // A. Forward Links
+          const cache = this.app.metadataCache.getFileCache(file);
+          if (cache && cache.links) {
+            cache.links.forEach(l => {
+              const linkPath = l.link; // Simple resolution for V1
+              if (!graphData.nodes.find(n => n.id === linkPath)) {
+                graphData.nodes.push({ id: linkPath, label: linkPath.split('/').pop().replace('.md', ''), group: 'neighbor' });
+              }
+              graphData.edges.push({ from: currentPath, to: linkPath });
+            });
+          }
+
+          // B. Backlinks
+          const allLinks = this.app.metadataCache.resolvedLinks;
+          for (const sourcePath in allLinks) {
+            if (allLinks[sourcePath][currentPath]) {
+              backlinks.push(sourcePath);
+              if (!graphData.nodes.find(n => n.id === sourcePath)) {
+                graphData.nodes.push({ id: sourcePath, label: sourcePath.split('/').pop().replace('.md', ''), group: 'neighbor' });
+              }
+              graphData.edges.push({ from: sourcePath, to: currentPath });
+            }
+          }
+
+          // Process Assets (Images, PDFs, etc.)
+          const assets = div.querySelectorAll('img, embed, object, iframe');
+          for (const el of assets) {
+            // Check for internal app:// links or relative paths
+            let src = el.getAttribute('src') || el.getAttribute('data');
+
+            if (src && src.startsWith('app://')) {
+              try {
+                // Attempt to find the file in the vault
+                // Strategy 1: Use the internal-embed src if available (most reliable for [[links]])
+                const container = el.closest('.internal-embed');
+                let targetFile = null;
+
+                if (container && container.getAttribute('src')) {
+                  const linktext = container.getAttribute('src');
+                  targetFile = this.app.metadataCache.getFirstLinkpathDest(linktext, file.path);
+                }
+
+
+                if (targetFile) {
+                  const arrayBuffer = await this.app.vault.readBinary(targetFile);
+                  const base64 = Buffer.from(arrayBuffer).toString('base64');
+                  const ext = targetFile.extension;
+                  const mime = this.getMimeType(ext);
+
+                  if (el.tagName.toLowerCase() === 'img') {
+                    el.src = `data:${mime};base64,${base64}`;
+                    el.removeAttribute('srcset');
+                  } else {
+                    // For embed/object/iframe
+                    const dataUri = `data:${mime};base64,${base64}`;
+                    if (el.hasAttribute('src')) el.setAttribute('src', dataUri);
+                    if (el.hasAttribute('data')) el.setAttribute('data', dataUri);
+                  }
+                }
+              } catch (assetError) {
+                console.error('Failed to process asset:', src, assetError);
+              }
+            }
+          }
+
+          // PREPARE RESPONSE
+          const response = {
+            html: div.innerHTML,
+            yaml: yamlData,
+            css: themeCSS,
+            backlinks,
+            graph: graphData
+          };
+
+          // INJECT TREE IF NEEDED
+          if (shouldRefreshTree) {
+            response.files = this.app.vault.getFiles().map(f => ({
+              path: f.path,
+              name: f.name,
+              basename: f.basename,
+              extension: f.extension
+            }));
+          }
+
+          sendCallback('RENDERED_FILE', response, { path: safePath });
+
+        } catch (renderError) {
+          console.error('Render Error:', renderError);
+          sendCallback('ERROR', { message: 'Rendering failed: ' + renderError.message });
+        }
+        return;
+      }
+
+      if (msg.cmd === 'GET_FILE') {
+        const safePath = this.sanitizePath(msg.path);
+        if (!safePath) {
+          sendCallback('ERROR', { message: 'Invalid path' });
+          return;
+        }
+
+        const file = this.app.vault.getAbstractFileByPath(safePath);
+        if (!file) {
+          sendCallback('ERROR', { message: 'File not found' });
+          return;
+        }
+
+        // 1. Handle Images (with Optional Resizing)
+        const IMAGE_EXTS = ['png', 'jpg', 'jpeg', 'gif', 'svg', 'webp'];
+        if (IMAGE_EXTS.includes(file.extension.toLowerCase())) {
+          console.log(`Note Relay: Reading Image ${file.path}`);
+          const arrayBuffer = await this.app.vault.readBinary(file);
+          
+          // Check for resize request (Thumbnail Mode for Free/Preview)
+          if (msg.options && msg.options.resize) {
+             try {
+               const blob = new Blob([arrayBuffer]);
+               const bitmap = await createImageBitmap(blob);
+               
+               // Calculate new dimensions (max 800px)
+               const MAX_WIDTH = 800;
+               let width = bitmap.width;
+               let height = bitmap.height;
+               
+               if (width > MAX_WIDTH) {
+                 height = Math.round(height * (MAX_WIDTH / width));
+                 width = MAX_WIDTH;
+               }
+               
+               const canvas = document.createElement('canvas');
+               canvas.width = width;
+               canvas.height = height;
+               const ctx = canvas.getContext('2d');
+               ctx.drawImage(bitmap, 0, 0, width, height);
+               
+               // Convert to JPEG 80% quality for thumbnails
+               const dataUrl = canvas.toDataURL('image/jpeg', 0.8);
+               const base64 = dataUrl.split(',')[1];
+               
+               sendCallback('FILE', base64, {
+                 path: msg.path,
+                 isImage: true,
+                 ext: 'jpg', // Thumbnails are always JPEGs
+                 originalExt: file.extension
+               });
+               return;
+             } catch (err) {
+               console.error('Image resize failed, falling back to full size:', err);
+               // Fallthrough to full size
+             }
+          }
+
+          // Full size (Default for Pro Download or Fallback)
+          const base64 = Buffer.from(arrayBuffer).toString('base64');
+          sendCallback('FILE', base64, {
+            path: msg.path,
+            isImage: true,
+            ext: file.extension
+          });
+        } 
+        // 2. Handle Markdown (Text)
+        else if (file.extension === 'md') {
+          const content = await this.app.vault.read(file);
+          const backlinks = [];
+          const resolved = this.app.metadataCache.resolvedLinks;
+          for (const [sourcePath, links] of Object.entries(resolved)) {
+            if (links[msg.path]) backlinks.push(sourcePath);
+          }
+
+          sendCallback('FILE', {
+            data: content,
+            backlinks
+          }, { path: msg.path });
+        }
+        // 3. Handle All Other Files (Binary - PDF, Video, Zip, etc.)
+        else {
+          // Treat as binary to prevent corruption
+          console.log(`Note Relay: Reading Binary File ${file.path}`);
+          const arrayBuffer = await this.app.vault.readBinary(file);
+          const base64 = Buffer.from(arrayBuffer).toString('base64');
+          sendCallback('FILE', base64, {
+            path: msg.path,
+            isBinary: true,
+            ext: file.extension
+          });
+        }
+        return;
+      }
+
+      if (msg.cmd === 'SAVE_FILE') {
+        const safePath = this.sanitizePath(msg.path);
+        if (!safePath) {
+          sendCallback('ERROR', { message: 'Invalid path' });
+          return;
+        }
+
+        const file = this.app.vault.getAbstractFileByPath(safePath);
+        if (!file) {
+          sendCallback('ERROR', { message: 'File not found' });
+          return;
+        }
+
+        await this.app.vault.modify(file, msg.data);
+
+        // Record sync event
+        if (false /* analytics removed */) {
+        }
+
+        sendCallback('SAVED', { path: safePath });
+        new obsidian.Notice(`Saved: ${safePath}`);
+        return;
+      }
+
+      if (msg.cmd === 'CREATE_FILE') {
+        const safePath = this.sanitizePath(msg.path);
+        if (!safePath) {
+          sendCallback('ERROR', { message: 'Invalid path' });
+          return;
+        }
+
+        const file = this.app.vault.getAbstractFileByPath(safePath);
+        if (file) {
+          sendCallback('ERROR', { message: 'File already exists' });
+          return;
+        }
+        await this.app.vault.create(safePath, '');
+        new obsidian.Notice(`Created: ${safePath}`);
+
+        // Recursively call GET_RENDERED_FILE with refreshTree flag
+        await this.processCommand({
+          cmd: 'GET_RENDERED_FILE',
+          path: safePath,
+          refreshTree: true
+        }, sendCallback);
+        return;
+      }
+
+      if (msg.cmd === 'CREATE_FOLDER') {
+        const safePath = this.sanitizePath(msg.path);
+        if (!safePath) {
+          sendCallback('ERROR', { message: 'Invalid path' });
+          return;
+        }
+
+        const file = this.app.vault.getAbstractFileByPath(safePath);
+        if (file) {
+          sendCallback('ERROR', { message: 'Folder already exists' });
+          return;
+        }
+        await this.app.vault.createFolder(safePath);
+        sendCallback('SAVED', { path: safePath });
+        new obsidian.Notice(`Created Folder: ${safePath}`);
+        return;
+      }
+
+      if (msg.cmd === 'RENAME_FILE') {
+        const safePath = this.sanitizePath(msg.path);
+        const safeNewPath = this.sanitizePath(msg.data.newPath);
+        if (!safePath || !safeNewPath) {
+          sendCallback('ERROR', { message: 'Invalid path' });
+          return;
+        }
+
+        const file = this.app.vault.getAbstractFileByPath(safePath);
+        if (!file) {
+          sendCallback('ERROR', { message: 'File not found' });
+          return;
+        }
+        await this.app.fileManager.renameFile(file, safeNewPath);
+        sendCallback('SAVED', { path: safeNewPath });
+        new obsidian.Notice(`Renamed: ${safePath} to ${safeNewPath}`);
+        return;
+      }
+
+      if (msg.cmd === 'DELETE_FILE') {
+        const safePath = this.sanitizePath(msg.path);
+        if (!safePath) {
+          sendCallback('ERROR', { message: 'Invalid path' });
+          return;
+        }
+
+        const file = this.app.vault.getAbstractFileByPath(safePath);
+        if (!file) {
+          sendCallback('ERROR', { message: 'File not found' });
+          return;
+        }
+        await this.app.vault.trash(file, true);
+        sendCallback('SAVED', { path: safePath });
+        new obsidian.Notice(`Deleted: ${safePath}`);
+        return;
+      }
+
+      if (msg.cmd === 'OPEN_FILE') {
+        const safePath = this.sanitizePath(msg.path);
+
+        if (!safePath) {
+          sendCallback('ERROR', { message: 'Invalid path' });
+          return;
+        }
+
+        const file = this.app.vault.getAbstractFileByPath(safePath);
+
+        if (!file) {
+          sendCallback('ERROR', { message: 'File not found' });
+          return;
+        }
+
+        // Check frontmatter for plugin types
+        const metadata = this.app.metadataCache.getFileCache(file);
+        const frontmatter = metadata?.frontmatter || {};
+
+        // Detect plugin type
+        let detectedPlugin = null;
+        if (frontmatter['kanban-plugin']) detectedPlugin = 'kanban';
+        else if (frontmatter['dataview']) detectedPlugin = 'dataview';
+        else if (frontmatter['excalidraw-plugin']) detectedPlugin = 'excalidraw';
+
+        if (!detectedPlugin) {
+          this.processCommand({
+            cmd: 'GET_RENDERED_FILE',
+            path: safePath
+          }, sendCallback);
+          return;
+        }
+
+        // Try to capture plugin view HTML from existing open leaf
+        const workspace = this.app.workspace;
+        let kanbanLeaf = workspace.getLeavesOfType('kanban')[0];
+
+        console.log('🔍 OPEN_FILE Debug:', {
+          detectedPlugin,
+          hasKanbanLeaf: !!kanbanLeaf,
+          allLeafTypes: workspace.getLeavesOfType('kanban').length,
+          allLeaves: this.app.workspace.getLeavesOfType('markdown').map(l => l.getViewState().type)
+        });
+
+        if (!kanbanLeaf) {
+          // Try to open the file in a new tab to create the view
+          try {
+            console.log('🔓 Attempting to open file in new leaf...');
+            const newLeaf = workspace.getLeaf('tab');
+            await newLeaf.openFile(file);
+            console.log('✅ File opened, view type:', newLeaf.getViewState().type);
+
+            // Check if it's now a kanban view
+            if (newLeaf.getViewState().type === 'kanban') {
+              kanbanLeaf = newLeaf;
+              console.log('✅ Kanban view detected!');
+            } else {
+              console.warn('⚠️ View type is not kanban:', newLeaf.getViewState().type);
+            }
+          } catch (openError) {
+            console.error('❌ Failed to open file:', openError);
+          }
+        } else {
+          // Leaf exists but might not be rendering - force a refresh
+          try {
+            console.log('🔄 Kanban leaf exists, forcing refresh...');
+            await kanbanLeaf.openFile(file);
+            // Give it a moment to actually render
+            await new Promise(resolve => setTimeout(resolve, 150));
+          } catch (refreshError) {
+            console.error('❌ Failed to refresh kanban leaf:', refreshError);
+          }
+        }
+
+        console.log('🎯 Attempting to extract HTML, kanbanLeaf exists:', !!kanbanLeaf);
+
+        // If we have a leaf, extract the rendered HTML
+        if (kanbanLeaf) {
+          const view = kanbanLeaf.view;
+
+          console.log('🔍 View check:', {
+            hasView: !!view,
+            hasContainerEl: !!view?.containerEl,
+            containerClasses: view?.containerEl?.className
+          });
+
+          if (view.containerEl) {
+            // Wait for Kanban to render (it may be async)
+            // Try multiple times with increasing delays
+            let kanbanBoard = null;
+            let attempts = 0;
+            const maxAttempts = 5;
+
+            while (!kanbanBoard && attempts < maxAttempts) {
+              if (attempts > 0) {
+                await new Promise(resolve => setTimeout(resolve, 100 * attempts)); // 100ms, 200ms, 300ms, 400ms
+                console.log(`⏳ Retry ${attempts}/${maxAttempts} - waiting for Kanban DOM...`);
+              }
+
+              kanbanBoard = view.containerEl.querySelector('.kanban-plugin');
+              attempts++;
+            }
+
+            console.log('🔍 Kanban board element:', {
+              found: !!kanbanBoard,
+              attempts: attempts,
+              selector: '.kanban-plugin',
+              containerHTML: view.containerEl.innerHTML.substring(0, 500)
+            });
+
+            if (kanbanBoard) {
+              const capturedHTML = kanbanBoard.outerHTML;
+
+              console.log('🎨 ========== KANBAN CAPTURE DEBUG ==========');
+              console.log('📏 HTML length:', capturedHTML.length);
+              console.log('📝 HTML preview (first 1000 chars):', capturedHTML.substring(0, 1000));
+              console.log('📝 HTML preview (last 500 chars):', capturedHTML.substring(capturedHTML.length - 500));
+
+              // Extract Kanban plugin CSS
+              const kanbanCSS = this.extractPluginCSS('.kanban-plugin');
+
+              console.log('🎨 CSS length:', kanbanCSS.length);
+              console.log('🎨 CSS preview (first 2000 chars):', kanbanCSS.substring(0, 2000));
+              console.log('🎨 CSS rule count:', (kanbanCSS.match(/\{/g) || []).length);
+
+              const response = {
+                renderedHTML: capturedHTML,
+                pluginCSS: kanbanCSS,
+                viewType: 'kanban',
+                success: true
+              };
+
+              console.log('📦 Response object keys:', Object.keys(response));
+              console.log('📦 Response.renderedHTML length:', response.renderedHTML.length);
+              console.log('📦 Response.pluginCSS length:', response.pluginCSS.length);
+              console.log('🎨 ========== END CAPTURE DEBUG ==========');
+
+              sendCallback('OPEN_FILE', response, { path: safePath });
+
+              // Close the leaf after capturing
+              kanbanLeaf.detach();
+              console.log('🗑️ Closed Kanban leaf');
+
+              return;
+            }
+          }
+        }
+
+        // If we got here, fall back to markdown rendering
+        console.warn('⚠️ Falling back to markdown rendering (no Kanban HTML captured)');
+
+        // Wrapper to ensure we return OPEN_FILE type even for fallback
+        const wrapperCallback = (type, data, meta) => {
+          if (type === 'RENDERED_FILE') {
+            sendCallback('OPEN_FILE', data, meta);
+          } else {
+            sendCallback(type, data, meta);
+          }
+        };
+
+        this.processCommand({
+          cmd: 'GET_RENDERED_FILE',
+          path: safePath
+        }, wrapperCallback);
+
+        return;
+      }
+
+      if (msg.cmd === 'OPEN_DAILY_NOTE') {
+        try {
+          // Check if daily notes plugin is enabled
+          const dailyNotesPlugin = this.app.internalPlugins?.plugins?.['daily-notes'];
+
+          if (!dailyNotesPlugin || !dailyNotesPlugin.enabled) {
+            sendCallback('ERROR', { message: 'Daily Notes plugin is not enabled in Obsidian' });
+            return;
+          }
+
+          // Use Obsidian's command to create/open today's daily note
+          // This properly processes Templater and respects all settings
+          this.app.commands.executeCommandById('daily-notes');
+
+          // Wait for the command to complete (file creation + Templater processing)
+          await new Promise(resolve => setTimeout(resolve, 300));
+
+          const activeFile = this.app.workspace.getActiveFile();
+
+          if (!activeFile) {
+            sendCallback('ERROR', { message: 'No file opened after daily notes command' });
+            return;
+          }
+
+          console.log('📅 Daily note created/opened:', activeFile.path);
+
+          // Get the active leaf and close it
+          const activeLeaf = this.app.workspace.getLeaf(false);
+          if (activeLeaf) {
+            activeLeaf.detach();
+            console.log('🗑️ Closed daily note leaf');
+          }
+
+          // Just return the path - let web UI load it normally
+          const response = { success: true, path: activeFile.path };
+          sendCallback('OPEN_DAILY_NOTE', response);
+
+        } catch (error) {
+          console.error('Daily Note Error:', error);
+          sendCallback('ERROR', { message: 'Failed to open daily note: ' + error.message });
+        }
+        return;
+      }
+
+    } catch (error) {
+      console.error('Note Relay Command Error:', error);
+      sendCallback('ERROR', { message: error.message });
     }
   }
+
+  answerCall(remoteId, offerSignal) {
+    // Configure ICE servers (STUN + TURN if available)
+    const iceServers = this.iceServers || [
+      { urls: 'stun:stun.l.google.com:19302' },
+      { urls: 'stun:stun1.l.google.com:19302' }
+    ];
+
+    const peer = new SimplePeer({
+      initiator: false,
+      trickle: false,
+      objectMode: false,
+      config: { iceServers }
+    });
+    let isAuthenticated = false;
+    let peerReadOnly = false;
+
+    peer.safeSend = (data) => {
+      if (peer._channel && peer._channel.readyState === 'open') {
+        try {
+          peer.send(JSON.stringify(data));
+        } catch (e) {
+          console.error('Send Fail', e);
+        }
+      }
+    };
+
+    peer.sendChunked = async (type, data, meta = {}) => {
+      if (!isAuthenticated && type !== 'ERROR') return;
+
+      const fullString = JSON.stringify(data);
+      const totalBytes = fullString.length;
+      let offset = 0;
+
+      if (totalBytes > 100000) {
+        console.log(`Note Relay: Sending Large File (${Math.round(totalBytes / 1024)}KB)`);
+      }
+
+      while (offset < totalBytes) {
+        const chunk = fullString.slice(offset, offset + CHUNK_SIZE);
+        offset += CHUNK_SIZE;
+        peer.safeSend({ type: 'PART', cat: type, chunk, end: offset >= totalBytes, ...meta });
+        await new Promise((r) => setTimeout(r, 5));
+      }
+    };
+
+    peer.on('signal', async (data) => {
+      await this.supabase.from('signaling').insert({
+        source: 'host',
+        target: remoteId,
+        type: 'answer',
+        payload: data
+      });
+    });
+
+    peer.on('connect', () => {
+      this.statusBar?.setText('Note Relay: Verifying...');
+
+      // Record WebRTC session start
+      if (false /* analytics removed */) {
+        const network = 'cloud'; // WebRTC connections are remote
+      }
+    });
+
+    peer.on('data', async (raw) => {
+      try {
+        const msg = JSON.parse(raw.toString());
+
+        // Handle authentication with ACL
+        if (msg.cmd === 'PING' || msg.cmd === 'HANDSHAKE') {
+          let accessGranted = false;
+          let isReadOnly = false;
+          let userIdentifier = 'unknown';
+
+          // Email-based authentication - check if owner or guest
+          if (msg.guestEmail && msg.authHash) {
+            const userEmail = msg.guestEmail.toLowerCase().trim();
+
+            // Check if this is the owner's email
+            if (this.settings.userEmail && userEmail === this.settings.userEmail.toLowerCase().trim()) {
+              // Owner authentication
+              if (this.settings.masterPasswordHash && msg.authHash === this.settings.masterPasswordHash) {
+                accessGranted = true;
+                isReadOnly = false;
+                userIdentifier = this.settings.userEmail;
+                console.log('✅ WebRTC: Owner authenticated -', userIdentifier);
+              } else {
+                console.log('❌ WebRTC: Owner password incorrect');
+                peer.safeSend({ type: 'ERROR', message: 'ACCESS_DENIED: Invalid password.' });
+                setTimeout(() => peer.destroy(), 1000);
+                return;
+              }
+            }
+          }
+
+          if (accessGranted) {
+            isAuthenticated = true;
+            peerReadOnly = isReadOnly;
+            this.statusBar?.setText(`Linked: ${msg.sessionName || userIdentifier}${isReadOnly ? ' (RO)' : ''}`);
+            if (this.statusBar) this.statusBar.style.color = '#4caf50';
+            peer.safeSend({
+              type: msg.cmd === 'PING' ? 'PONG' : 'HANDSHAKE_ACK',
+              version: BUILD_VERSION,
+              readOnly: isReadOnly,
+              styles: []
+            });
+
+            // Audit log the connection
+          } else {
+            console.log('❌ WebRTC: Authentication failed - invalid credentials or not in ACL');
+            peer.safeSend({ type: 'ERROR', message: 'ACCESS_DENIED: Invalid credentials or not authorized' });
+            setTimeout(() => peer.destroy(), 1000);
+          }
+          return;
+        }
+
+        if (!isAuthenticated) return;
+
+        // Block write commands if in read-only mode
+        // Block write commands if in read-only mode
+        // FIXED: Updated to match actual command names
+        const writeCommands = ['CREATE_FILE', 'SAVE_FILE', 'DELETE_FILE', 'RENAME_FILE', 'CREATE_FOLDER'];
+        if (peerReadOnly && writeCommands.includes(msg.cmd)) {
+          console.log(`🔒 Blocked ${msg.cmd} command - read-only mode`);
+          peer.safeSend({ type: 'ERROR', message: 'READ-ONLY MODE: Editing is disabled' });
+          return;
+        }
+
+        // Create a wrapped sendCallback that preserves the requestId
+        const wrappedSendCallback = (type, data, meta = {}) => {
+          // Preserve requestId from original message for promise resolution
+          const metaWithRequestId = msg.requestId !== undefined
+            ? { ...meta, requestId: msg.requestId }
+            : meta;
+          return peer.sendChunked(type, data, metaWithRequestId);
+        };
+
+        // Use unified command processor with WebRTC send callback
+        // Use unified command processor with WebRTC send callback
+        // PASS READ-ONLY STATUS
+        await this.processCommand(msg, wrappedSendCallback, peerReadOnly);
+
+      } catch (e) {
+        console.error('Note Relay Error', e);
+      }
+    });
+
+    peer.on('close', () => {
+      new obsidian.Notice('Client Disconnected');
+      this.statusBar?.setText('Note Relay: Active');
+      if (this.statusBar) this.statusBar.style.color = '';
+
+      // Record WebRTC session end
+      if (false /* analytics removed */) {
+      }
+    });
+
+    peer.on('error', (err) => {
+      console.error('Peer error:', err);
+      this.statusBar?.setText('Note Relay: Error');
+
+      // Record error event
+      if (false /* analytics removed */) {
+      }
+    });
+
+    peer.signal(offerSignal);
+  }
+
+  async waitForRender(element) {
+    // Pre-check: If empty, wait for renderer to start
+    if (!element.innerHTML.trim()) {
+      await new Promise(r => setTimeout(r, 100));
+    }
+
+    return new Promise((resolve) => {
+      let timeout = null;
+
+      // Safety net: Force resolve after 2 seconds max
+      const maxTimeout = setTimeout(() => {
+        if (observer) observer.disconnect();
+        resolve();
+      }, 2000);
+
+      const observer = new MutationObserver((mutations) => {
+        // Reset debounce timer on every mutation
+        if (timeout) clearTimeout(timeout);
+        timeout = setTimeout(() => {
+          observer.disconnect();
+          clearTimeout(maxTimeout);
+          resolve();
+        }, 100); // Wait for 100ms of silence
+      });
+
+      observer.observe(element, {
+        attributes: true,
+        childList: true,
+        subtree: true,
+        characterData: true
+      });
+
+      // Initial check: if nothing happens in 100ms, assume done (for simple notes)
+      timeout = setTimeout(() => {
+        observer.disconnect();
+        clearTimeout(maxTimeout);
+        resolve();
+      }, 100);
+    });
+  }
+
+  async checkConnectionHealth() {
+    // Check if signaling connection is still alive
+    if (!this.supabase || !this.settings.userEmail) {
+      console.log('Note Relay: Connection health check - not connected');
+      return;
+    }
+
+    const timeSinceLastHeartbeat = Date.now() - (this.lastHeartbeatTime || 0);
+
+    // If more than 6 minutes since last heartbeat, reconnect
+    if (timeSinceLastHeartbeat > 6 * 60 * 1000) {
+      console.log('Note Relay: Connection stale, reconnecting...');
+      await this.connectSignaling();
+    } else {
+      console.log('Note Relay: Connection healthy');
+    }
+  }
+
+  async connectSignaling() {
+    // SECURITY CHECK: Do not connect to Supabase if no email is present.
+    if (!this.settings.userEmail) {
+      console.log('Note Relay: No user email found. Staying offline (Local Mode only).');
+      return; // Exit immediately
+    }
+
+    // Disconnect existing connection if any
+    this.disconnectSignaling();
+
+    // Load Supabase credentials dynamically from API (no hardcoded keys)
+    if (!SUPABASE_URL || !SUPABASE_KEY) {
+      try {
+        const initResponse = await fetch(`${API_BASE_URL}/api/plugin-init`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            email: this.settings.userEmail,
+            vaultId: this.settings.vaultId
+          })
+        });
+
+        if (!initResponse.ok) {
+          const error = await initResponse.json();
+          console.error('Failed to load connection credentials:', error);
+          new obsidian.Notice('Note Relay: Unable to connect to cloud service');
+          return;
+        }
+
+        const initData = await initResponse.json();
+        SUPABASE_URL = initData.supabase.url;
+        SUPABASE_KEY = initData.supabase.anonKey;
+        this.iceServers = initData.iceServers; // Store for WebRTC
+
+        console.log('✅ Connection credentials loaded dynamically');
+      } catch (err) {
+        console.error('Failed to fetch connection credentials:', err);
+        new obsidian.Notice('Note Relay: Connection initialization failed');
+        return;
+      }
+    }
+
+    this.supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
+
+    // Check if we have user email for remote access
+    let signalId = null;
+    if (this.settings.userEmail && this.settings.masterPasswordHash) {
+      signalId = await this.registerVaultAndGetSignalId();
+    }
+
+    // Use signal ID if validated, otherwise fall back to 'host' for testing
+    const ID = signalId || 'host';
+
+    if (signalId) {
+      this.statusBar?.setText(`Note Relay: Pro Active (${ID.slice(0, 8)}...)`);
+      if (this.statusBar) this.statusBar.style.color = '#7c4dff';
+    } else {
+      this.statusBar?.setText(`Note Relay: Active`);
+    }
+
+    console.log('🎧 Host listening for offers with filter: target=eq.' + ID);
+
+    this.channel = this.supabase.channel('host-channel')
+      .on(
+        'postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'signaling', filter: `target=eq.${ID}` },
+        (payload) => {
+          console.log('📨 Received signaling message:', payload.new);
+          if (payload.new.type === 'offer') {
+            console.log('✅ Offer received from:', payload.new.source);
+            new obsidian.Notice(`Incoming Connection...`);
+            this.answerCall(payload.new.source, payload.new.payload);
+          }
+        }
+      )
+      .subscribe();
+  }
+
+  extractThemeCSS() {
+    // Capture CSS rules AND essential theme variables
+    const allCSS = [];
+
+    // First, get computed theme variables from body (ensures we get active theme)
+    const bodyStyles = getComputedStyle(document.body);
+    const essentialVars = [
+      '--background-primary',
+      '--background-secondary',
+      '--background-primary-alt',
+      '--background-secondary-alt',
+      '--background-modifier-border',
+      '--background-modifier-hover',
+      '--background-modifier-border-hover',
+      '--text-normal',
+      '--text-muted',
+      '--text-faint',
+      '--text-accent',
+      '--text-accent-hover',
+      '--interactive-accent',
+      '--interactive-accent-hover',
+      '--tag-background',
+      '--tag-color'
+    ];
+
+    // DEBUG: Log what we're extracting
+    console.log('🎨 THEME EXTRACTION DEBUG:');
+
+    // Build :root block with essential variables at the top
+    let rootVars = ':root {\n';
+    essentialVars.forEach(varName => {
+      const value = bodyStyles.getPropertyValue(varName).trim();
+      console.log(`  ${varName}: ${value || 'NOT FOUND'}`);
+      if (value) {
+        // Add !important to ensure these override fallbacks
+        rootVars += `  ${varName}: ${value} !important;\n`;
+      }
+    });
+    rootVars += '}\n';
+    allCSS.push(rootVars);
+
+    console.log('📋 Root vars block:', rootVars);
+    console.log('📊 Total stylesheet count:', document.styleSheets.length);
+
+    // Then capture stylesheet rules (filtered)
+    Array.from(document.styleSheets).forEach(sheet => {
+      try {
+        // Only process if we can access cssRules (CORS check)
+        if (sheet.cssRules) {
+          Array.from(sheet.cssRules).forEach(rule => {
+            const cssText = rule.cssText;
+
+            // Skip @font-face rules (contain app:// URLs that fail CORS)
+            if (cssText.startsWith('@font-face')) {
+              return;
+            }
+
+            // Skip rules with app:// protocol URLs
+            if (cssText.includes('app://')) {
+              return;
+            }
+
+            // Skip rules with /public/ paths (Obsidian internal)
+            if (cssText.includes('/public/')) {
+              return;
+            }
+
+            // Include everything else (CSS variables, colors, styles, plugin CSS)
+            allCSS.push(cssText);
+          });
+        }
+      } catch (e) {
+        // Skip CORS-blocked stylesheets
+      }
+    });
+
+    return allCSS.join('\n');
+  }
+
+  extractPluginCSS(pluginClass) {
+    // Extract CSS rules that apply to a specific plugin's classes
+    const pluginCSS = [];
+    const seenRules = new Set(); // Deduplicate rules
+
+    // First, add all Obsidian CSS variables that the plugin might use
+    const rootVars = getComputedStyle(document.body);
+    const obsidianVars = [
+      '--size-2-1', '--size-2-2', '--size-2-3',
+      '--size-4-1', '--size-4-2', '--size-4-3', '--size-4-4',
+      '--size-4-5', '--size-4-6', '--size-4-8', '--size-4-12',
+      '--background-primary', '--background-secondary',
+      '--background-primary-alt', '--background-secondary-alt',
+      '--background-modifier-border', '--background-modifier-border-hover',
+      '--background-modifier-border-focus',
+      '--text-normal', '--text-muted', '--text-faint',
+      '--interactive-accent', '--interactive-hover',
+      '--table-border-width', '--table-border-color',
+      '--font-text-size', '--font-ui-small', '--font-ui-smaller',
+      '--clickable-icon-radius', '--radius-s', '--radius-m',
+      '--tag-padding-x', '--tag-padding-y', '--tag-radius'
+    ];
+
+    let varsBlock = ':root {\n';
+    obsidianVars.forEach(varName => {
+      const value = rootVars.getPropertyValue(varName).trim();
+      if (value) {
+        varsBlock += `  ${varName}: ${value};\n`;
+      }
+    });
+    varsBlock += '}\n';
+    pluginCSS.push(varsBlock);
+
+    // Extract base class name for pattern matching
+    // e.g., '.kanban-plugin' -> 'kanban-plugin'
+    const baseClassName = pluginClass.replace(/^\./, '');
+
+    Array.from(document.styleSheets).forEach(sheet => {
+      try {
+        if (sheet.cssRules) {
+          Array.from(sheet.cssRules).forEach(rule => {
+            const cssText = rule.cssText;
+
+            // Skip problematic rules
+            if (cssText.startsWith('@font-face') || cssText.includes('app://')) {
+              return;
+            }
+
+            // Skip if we've already seen this rule
+            if (seenRules.has(cssText)) {
+              return;
+            }
+
+            // Include rules that:
+            // 1. Contain the base class name (catches .kanban-plugin, .kanban-plugin__item, etc.)
+            // 2. Start with the base class (catches .kanban-plugin { ... })
+            if (cssText.includes(baseClassName)) {
+              pluginCSS.push(cssText);
+              seenRules.add(cssText);
+            }
+          });
+        }
+      } catch (e) {
+        // CORS error, skip
+      }
+    });
+
+    console.log('🎨 Extracted', pluginCSS.length - 1, 'CSS rules for', baseClassName);
+
+    return pluginCSS.join('\n');
+  }
+
+  getMimeType(ext) {
+    const map = {
+      'png': 'image/png',
+      'jpg': 'image/jpeg',
+      'jpeg': 'image/jpeg',
+      'gif': 'image/gif',
+      'svg': 'image/svg+xml',
+      'webp': 'image/webp',
+      'pdf': 'application/pdf'
+    };
+    return map[ext.toLowerCase()] || 'application/octet-stream';
+  }
+
+  /**
+   * Zero-Knowledge Audit Log
+   * @param {string} userIdentifier - Email or userId of accessor
+   * @param {string} action - Action performed (READ, WRITE, DELETE, etc.)
+   * @param {string} target - File path or resource accessed
+   */
 }
 
 class NoteRelaySettingTab extends obsidian.PluginSettingTab {
@@ -374,25 +1428,6 @@ class NoteRelaySettingTab extends obsidian.PluginSettingTab {
     containerEl.empty();
 
     containerEl.createEl('h2', { text: 'Note Relay Configuration' });
-
-    // Step 0: Consent Toggle
-    new obsidian.Setting(containerEl)
-      .setName('Enable Remote Access')
-      .setDesc('Allow this plugin to connect to Note Relay servers')
-      .addToggle(toggle => toggle
-        .setValue(this.plugin.settings.enableRemoteAccess)
-        .onChange(async (value) => {
-          this.plugin.settings.enableRemoteAccess = value;
-          await this.plugin.saveSettings();
-          if (value) {
-            if (this.plugin.settings.userEmail && this.plugin.settings.masterPasswordHash) {
-              this.plugin.connectSignaling();
-            }
-          } else {
-            this.plugin.disconnectSignaling();
-          }
-          this.display();
-        }));
 
     // Step 1: Email Account
     containerEl.createEl('h3', { text: '1️⃣ Account' });
