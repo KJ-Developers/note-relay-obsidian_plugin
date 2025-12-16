@@ -14,7 +14,7 @@ const { join } = require('path');
 let SUPABASE_URL = null;
 let SUPABASE_KEY = null;
 const API_BASE_URL = 'https://noterelay.io';
-const BUILD_VERSION = '2024.12.16-1052';
+const BUILD_VERSION = '2024.12.16-1108';
 const CHUNK_SIZE = 16 * 1024;
 const DEFAULT_SETTINGS = {
   passwordHash: '',
@@ -74,16 +74,6 @@ class MicroServer extends obsidian.Plugin {
       await this.saveSettings();
     }
 
-    // Initialize telemetry service
-    // STRICT GATING: Only enable analytics for registered users (dbVaultId + userId present)
-    // No registration = No telemetry (no local UUID usage)
-    if (this.settings.enableAnalytics && this.settings.dbVaultId && this.settings.userId) {
-      // telemetryService.init(this.settings.dbVaultId, this.settings.userId, this.nodeId, true);
-      // telemetryService.recordSessionStart('lan'); // Initial session on plugin load
-      console.log('[Telemetry] Initialized for registered vault:', this.settings.dbVaultId);
-    } else if (!this.settings.dbVaultId || !this.settings.userId) {
-      console.log('[Telemetry] Disabled - vault not fully registered');
-    }
 
     console.log(`%c PORTAL ${BUILD_VERSION} READY`, 'color: #00ff00; font-weight: bold; background: #000;');
     this.statusBar = this.addStatusBarItem();
@@ -115,10 +105,7 @@ class MicroServer extends obsidian.Plugin {
   onunload() {
     this.disconnectSignaling();
 
-    // Flush telemetry before shutdown
-    if (this.settings.enableAnalytics) {
-      // telemetryService.recordSessionEnd();
-      // telemetryService.flush();
+    if (false /* analytics removed */) {
     }
   }
 
@@ -223,10 +210,7 @@ class MicroServer extends obsidian.Plugin {
           this.settings.userId = result.userId;
           await this.saveSettings();
 
-          // Only initialize telemetry if user has opted in
-          if (this.settings.enableAnalytics) {
-            // telemetryService.init(this.settings.dbVaultId, this.settings.userId, this.nodeId, true);
-            // telemetryService.recordSessionStart('lan');
+          if (false /* analytics removed */) {
             console.log('[Telemetry] Initialized for registered vault:', this.settings.dbVaultId);
           }
         }
@@ -654,8 +638,7 @@ class MicroServer extends obsidian.Plugin {
         await this.app.vault.modify(file, msg.data);
 
         // Record sync event
-        if (this.settings.enableAnalytics) {
-          // telemetryService.recordSync(msg.data.length);
+        if (false /* analytics removed */) {
         }
 
         sendCallback('SAVED', { path: safePath });
@@ -1018,9 +1001,8 @@ class MicroServer extends obsidian.Plugin {
       this.statusBar?.setText('Portal: Verifying...');
 
       // Record WebRTC session start
-      if (this.settings.enableAnalytics) {
+      if (false /* analytics removed */) {
         const network = 'cloud'; // WebRTC connections are remote
-        // telemetryService.recordSessionStart(network);
       }
     });
 
@@ -1164,7 +1146,6 @@ class MicroServer extends obsidian.Plugin {
             });
 
             // Audit log the connection
-            this.logActivity(userIdentifier, 'CONNECTED', 'WebRTC');
           } else {
             console.log('❌ WebRTC: Authentication failed - invalid credentials or not in ACL');
             peer.safeSend({ type: 'ERROR', message: 'ACCESS_DENIED: Invalid credentials or not authorized' });
@@ -1206,8 +1187,7 @@ class MicroServer extends obsidian.Plugin {
       if (this.statusBar) this.statusBar.style.color = '';
 
       // Record WebRTC session end
-      if (this.settings.enableAnalytics) {
-        // telemetryService.recordSessionEnd();
+      if (false /* analytics removed */) {
       }
     });
 
@@ -1216,8 +1196,7 @@ class MicroServer extends obsidian.Plugin {
       this.statusBar?.setText('Portal: Error');
 
       // Record error event
-      if (this.settings.enableAnalytics) {
-        // telemetryService.recordError('webrtc_error', err.message || 'Unknown WebRTC error');
+      if (false /* analytics removed */) {
       }
     });
 
@@ -1534,33 +1513,6 @@ class MicroServer extends obsidian.Plugin {
    * @param {string} action - Action performed (READ, WRITE, DELETE, etc.)
    * @param {string} target - File path or resource accessed
    */
-  async logActivity(userIdentifier, action, target, details = null) {
-    const timestamp = new Date().toISOString();
-    const logEntry = `[${timestamp}] [${userIdentifier}] ${action} ${target}`;
-    console.log('🔍 AUDIT:', logEntry);
-
-    // ZERO KNOWLEDGE: Logs stay LOCAL only
-    // Write to /.obsidian/plugins/noterelay/access.log
-    try {
-      const logFilePath = '.obsidian/plugins/noterelay/access.log';
-      const vault = this.app.vault;
-      const adapter = vault.adapter;
-
-      // Read existing log or create new
-      let existingLog = '';
-      try {
-        existingLog = await adapter.read(logFilePath);
-      } catch (e) {
-        // File doesn't exist yet, that's fine
-      }
-
-      // Append new entry
-      const newEntry = `${logEntry}${details ? ' ' + JSON.stringify(details) : ''}\n`;
-      await adapter.write(logFilePath, existingLog + newEntry);
-    } catch (error) {
-      console.warn('Failed to write audit log locally:', error);
-    }
-  }
 }
 
 class MicroServerSettingTab extends obsidian.PluginSettingTab {
