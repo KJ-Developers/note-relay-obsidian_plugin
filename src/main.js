@@ -9,14 +9,12 @@ const SimplePeer = require('simple-peer');
 const { readFileSync } = require('fs');
 const { join } = require('path');
 
-// Analytics telemetry service
-import telemetryService from './telemetry';
 
 // Supabase credentials loaded dynamically from API (no hardcoded keys)
 let SUPABASE_URL = null;
 let SUPABASE_KEY = null;
 const API_BASE_URL = 'https://noterelay.io';
-const BUILD_VERSION = '2024.12.16-1035';
+const BUILD_VERSION = '2024.12.16-1052';
 const CHUNK_SIZE = 16 * 1024;
 const DEFAULT_SETTINGS = {
   passwordHash: '',
@@ -31,7 +29,6 @@ const DEFAULT_SETTINGS = {
   vaultId: '', // Unique vault identifier (auto-generated)
   guestList: [], // [{ userId, email, passHash, mode: 'rw'|'ro', label, status: 'pending'|'verified' }]
   // ANALYTICS
-  enableAnalytics: false // Opt-in only - user must explicitly enable
 };
 
 async function hashString(str) {
@@ -81,8 +78,8 @@ class MicroServer extends obsidian.Plugin {
     // STRICT GATING: Only enable analytics for registered users (dbVaultId + userId present)
     // No registration = No telemetry (no local UUID usage)
     if (this.settings.enableAnalytics && this.settings.dbVaultId && this.settings.userId) {
-      telemetryService.init(this.settings.dbVaultId, this.settings.userId, this.nodeId, true);
-      telemetryService.recordSessionStart('lan'); // Initial session on plugin load
+      // telemetryService.init(this.settings.dbVaultId, this.settings.userId, this.nodeId, true);
+      // telemetryService.recordSessionStart('lan'); // Initial session on plugin load
       console.log('[Telemetry] Initialized for registered vault:', this.settings.dbVaultId);
     } else if (!this.settings.dbVaultId || !this.settings.userId) {
       console.log('[Telemetry] Disabled - vault not fully registered');
@@ -120,8 +117,8 @@ class MicroServer extends obsidian.Plugin {
 
     // Flush telemetry before shutdown
     if (this.settings.enableAnalytics) {
-      telemetryService.recordSessionEnd();
-      telemetryService.flush();
+      // telemetryService.recordSessionEnd();
+      // telemetryService.flush();
     }
   }
 
@@ -228,8 +225,8 @@ class MicroServer extends obsidian.Plugin {
 
           // Only initialize telemetry if user has opted in
           if (this.settings.enableAnalytics) {
-            telemetryService.init(this.settings.dbVaultId, this.settings.userId, this.nodeId, true);
-            telemetryService.recordSessionStart('lan');
+            // telemetryService.init(this.settings.dbVaultId, this.settings.userId, this.nodeId, true);
+            // telemetryService.recordSessionStart('lan');
             console.log('[Telemetry] Initialized for registered vault:', this.settings.dbVaultId);
           }
         }
@@ -658,7 +655,7 @@ class MicroServer extends obsidian.Plugin {
 
         // Record sync event
         if (this.settings.enableAnalytics) {
-          telemetryService.recordSync(msg.data.length);
+          // telemetryService.recordSync(msg.data.length);
         }
 
         sendCallback('SAVED', { path: safePath });
@@ -1023,7 +1020,7 @@ class MicroServer extends obsidian.Plugin {
       // Record WebRTC session start
       if (this.settings.enableAnalytics) {
         const network = 'cloud'; // WebRTC connections are remote
-        telemetryService.recordSessionStart(network);
+        // telemetryService.recordSessionStart(network);
       }
     });
 
@@ -1210,7 +1207,7 @@ class MicroServer extends obsidian.Plugin {
 
       // Record WebRTC session end
       if (this.settings.enableAnalytics) {
-        telemetryService.recordSessionEnd();
+        // telemetryService.recordSessionEnd();
       }
     });
 
@@ -1220,7 +1217,7 @@ class MicroServer extends obsidian.Plugin {
 
       // Record error event
       if (this.settings.enableAnalytics) {
-        telemetryService.recordError('webrtc_error', err.message || 'Unknown WebRTC error');
+        // telemetryService.recordError('webrtc_error', err.message || 'Unknown WebRTC error');
       }
     });
 
