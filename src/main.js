@@ -14,7 +14,7 @@ const { join } = require('path');
 let SUPABASE_URL = null;
 let SUPABASE_KEY = null;
 const API_BASE_URL = 'https://noterelay.io';
-const BUILD_VERSION = '2024.12.16-1135';
+const BUILD_VERSION = '2024.12.16-1358';
 const CHUNK_SIZE = 16 * 1024;
 const DEFAULT_SETTINGS = {
   passwordHash: '',
@@ -35,7 +35,6 @@ class NoteRelay extends obsidian.Plugin {
     await this.loadSettings();
     this.addSettingTab(new NoteRelaySettingTab(this.app, this));
 
-    // BETA KILL SWITCH: Check if plugin is locked
     // Generate pluginId from vault path for license validation
     const vaultPath = this.app.vault.adapter.basePath;
     this.pluginId = await hashString(vaultPath);
@@ -48,7 +47,6 @@ class NoteRelay extends obsidian.Plugin {
     }
     console.log('Plugin ID:', this.pluginId);
 
-    // TRINITY PROTOCOL: Generate Machine ID (Node ID)
     // This stays local (localStorage) and does NOT sync via Obsidian Sync
     // Purpose: Distinguish different devices running the same vault
     let nodeId = window.localStorage.getItem('note-relay-node-id');
@@ -60,24 +58,12 @@ class NoteRelay extends obsidian.Plugin {
     this.nodeId = nodeId;
     console.log('Machine Identity:', this.nodeId);
 
-    // Cleanup legacy identity artifacts from removed standby feature
-    window.localStorage.removeItem('portal-device-id');
-    if (this.settings.targetHostId !== undefined) {
-      delete this.settings.targetHostId;
-      await this.saveSettings();
-    }
-
-
     console.log(`%c PORTAL ${BUILD_VERSION} READY`, 'color: #00ff00; font-weight: bold; background: #000;');
     this.statusBar = this.addStatusBarItem();
     this.isConnected = false;
 
     // Auto-connect on plugin load
-    if (this.settings.autoConnect !== false) {
-      this.connectSignaling();
-    } else {
-      this.statusBar?.setText('Note Relay: Stopped');
-    }
+    this.connectSignaling();
 
     // Initialize heartbeat timestamp
     this.lastHeartbeatTime = Date.now();
@@ -92,14 +78,16 @@ class NoteRelay extends obsidian.Plugin {
     this.registerDomEvent(document, 'visibilitychange', this.wakeHandler);
     console.log('Note Relay: Wake detection enabled');
 
-    setTimeout(() => this.connectSignaling(), 1000);
+    // Only auto-connect if fully configured (email + password)
+    if (this.settings.userEmail && this.settings.masterPasswordHash) {
+      setTimeout(() => this.connectSignaling(), 1000);
+    } else {
+      this.statusBar?.setText('Note Relay: Not configured');
+    }
   }
 
   onunload() {
     this.disconnectSignaling();
-
-    if (false /* analytics removed */) {
-    }
   }
 
   async loadSettings() {
@@ -110,28 +98,24 @@ class NoteRelay extends obsidian.Plugin {
     await this.saveData(this.settings);
   }
 
-  /**
-   * Sanitize file paths to prevent directory traversal attacks
-   * @param {string} unsafePath - Raw user input path
-   * @returns {string} Sanitized path safe for vault operations
-   */
+
+  // Sanitize file paths to prevent directory traversal attacks
   sanitizePath(unsafePath) {
     if (!unsafePath || typeof unsafePath !== 'string') return '';
 
-    // 1. Normalize slashes
-    let clean = unsafePath.replace(/\\/g, '/');
+    let clean = unsafePath
+      .replace(/\\/g, '/')           // Normalize backslashes
+      .replace(/\0/g, '')            // Remove null bytes
+      .replace(/\/+/g, '/')          // Collapse multiple slashes
+      .trim();
 
-    // 2. Remove path traversal attempts (..)
-    clean = clean.replace(/\.\.\+/g, '');
+    // Remove ALL path traversal patterns (before and after normalization)
+    while (clean.includes('..')) {
+      clean = clean.replace(/\.\./g, '');
+    }
 
-    // 3. Remove leading slashes (force relative paths)
+    // Force relative path (no leading slash)
     clean = clean.replace(/^\/+/, '');
-
-    // 4. Remove any remaining dangerous patterns
-    clean = clean.replace(/[\/]{2,}/g, '/'); // Multiple slashes
-
-    // 5. Trim whitespace
-    clean = clean.trim();
 
     return clean;
   }
@@ -156,8 +140,8 @@ class NoteRelay extends obsidian.Plugin {
           signalId: this.pluginId,
           vaultName: this.app.vault.getName(),
           hostname: os.hostname(),
-          nodeId: this.nodeId,           // Machine ID (Trinity Protocol)
-          machineName: os.hostname()     // User-friendly machine identifier
+          nodeId: this.nodeId,
+          machineName: os.hostname()
         })
       });
 
@@ -189,22 +173,6 @@ class NoteRelay extends obsidian.Plugin {
       if (result.success) {
         console.log('Vault registered! Signal ID:', result.signalId, 'DB Vault ID:', result.vaultId, 'User ID:', result.userId, 'Plan:', result.planType);
         this.signalId = result.signalId; this.isConnected = true;
-
-        // Capture license tier from server response
-        if (result.planType) {
-          await this.saveSettings();
-        }
-
-        // Save the database vault ID and user ID for analytics
-        if (result.vaultId && result.userId) {
-          this.settings.dbVaultId = result.vaultId;
-          this.settings.userId = result.userId;
-          await this.saveSettings();
-
-          if (false /* analytics removed */) {
-            console.log('[Telemetry] Initialized for registered vault:', this.settings.dbVaultId);
-          }
-        }
 
         this.startHeartbeat();
         // Fetch TURN credentials after successful registration
@@ -296,14 +264,6 @@ class NoteRelay extends obsidian.Plugin {
       // ALWAYS update timestamp (we attempted contact)
       this.lastHeartbeatTime = Date.now();
 
-      // KILL SWITCH: Stop if license is invalid
-      if (response.status === 401 || response.status === 403) {
-        console.warn(`Note Relay: License invalid (${response.status}). Stopping heartbeat.`);
-        clearInterval(this.heartbeatInterval);
-        new obsidian.Notice("Note Relay: License expired. Remote access paused.");
-        return { success: false, fatal: true, reason: 'auth' };
-      }
-
       if (!response.ok) {
         console.warn(`Note Relay: Heartbeat transient error (${response.status})`);
         return { success: false, fatal: false, reason: 'server' };
@@ -352,14 +312,14 @@ class NoteRelay extends obsidian.Plugin {
    * @param {Object} msg - The command message { cmd, path, data }
    * @param {Function} sendCallback - Function to send response: (type, data, meta) => void
    */
-  async processCommand(msg, sendCallback) {
+  async processCommand(msg, sendCallback, isReadOnly = false) {
     try {
       if (msg.cmd === 'PING' || msg.cmd === 'HANDSHAKE') {
         console.log('🔒 Server PING/HANDSHAKE received');
         const themeCSS = this.extractThemeCSS();
         sendCallback(msg.cmd === 'PING' ? 'PONG' : 'HANDSHAKE_ACK', {
           version: BUILD_VERSION,
-          readOnly: false, // Will be overridden by HTTP/WebRTC handlers in their callbacks
+          readOnly: false,
           css: themeCSS
         });
         return;
@@ -393,7 +353,6 @@ class NoteRelay extends obsidian.Plugin {
         };
         getAllFolders(this.app.vault.getRoot());
 
-        // NEW: Send Theme CSS immediately with the file tree
         const treeCss = this.extractThemeCSS();
         sendCallback('TREE', { files, folders: allFolders, css: treeCss });
         return;
@@ -411,6 +370,12 @@ class NoteRelay extends obsidian.Plugin {
 
         // AUTO-CREATE MISSING FILE (Ghost Link Support)
         if (!file) {
+          // BLOCK GHOST CREATION IN READ-ONLY MODE
+          if (isReadOnly) {
+            console.log('🔒 Ghost Link blocked - read-only mode');
+            sendCallback('ERROR', { message: 'READ-ONLY MODE: Cannot create new file.' });
+            return;
+          }
           try {
             console.log('Ghost Link: Creating missing file', safePath);
             file = await this.app.vault.create(safePath, '');
@@ -1052,7 +1017,9 @@ class NoteRelay extends obsidian.Plugin {
         if (!isAuthenticated) return;
 
         // Block write commands if in read-only mode
-        const writeCommands = ['CREATE', 'WRITE', 'DELETE', 'RENAME'];
+        // Block write commands if in read-only mode
+        // FIXED: Updated to match actual command names
+        const writeCommands = ['CREATE_FILE', 'SAVE_FILE', 'DELETE_FILE', 'RENAME_FILE', 'CREATE_FOLDER'];
         if (peerReadOnly && writeCommands.includes(msg.cmd)) {
           console.log(`🔒 Blocked ${msg.cmd} command - read-only mode`);
           peer.safeSend({ type: 'ERROR', message: 'READ-ONLY MODE: Editing is disabled' });
@@ -1069,7 +1036,9 @@ class NoteRelay extends obsidian.Plugin {
         };
 
         // Use unified command processor with WebRTC send callback
-        await this.processCommand(msg, wrappedSendCallback);
+        // Use unified command processor with WebRTC send callback
+        // PASS READ-ONLY STATUS
+        await this.processCommand(msg, wrappedSendCallback, peerReadOnly);
 
       } catch (e) {
         console.error('Note Relay Error', e);
@@ -1423,7 +1392,7 @@ class NoteRelaySettingTab extends obsidian.PluginSettingTab {
 
     // Step 1: Email Account
     containerEl.createEl('h3', { text: '1️⃣ Account' });
-    
+
     new obsidian.Setting(containerEl)
       .setName('Email Address')
       .setDesc('Your noterelay.io account email')
@@ -1434,14 +1403,14 @@ class NoteRelaySettingTab extends obsidian.PluginSettingTab {
           const value = text.getValue().trim();
           if (!value) return;
           if (value === this.plugin.settings.userEmail && this.plugin.settings.emailValidated) return;
-          
+
           try {
             const response = await fetch(`${API_BASE_URL}/api/plugin-init`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ email: value, vaultId: this.plugin.settings.vaultId })
             });
-            
+
             if (response.ok) {
               this.plugin.settings.userEmail = value;
               this.plugin.settings.emailValidated = true;
@@ -1477,7 +1446,7 @@ class NoteRelaySettingTab extends obsidian.PluginSettingTab {
 
     // Step 2: Vault Password
     containerEl.createEl('h3', { text: '2️⃣ Vault Password' });
-    
+
     new obsidian.Setting(containerEl)
       .setName('Remote Vault Password')
       .setDesc('Password required to access your vault remotely')
@@ -1496,7 +1465,7 @@ class NoteRelaySettingTab extends obsidian.PluginSettingTab {
           if (e.key === 'Enter') text.inputEl.blur();
         });
       });
-    
+
     const passStatus = containerEl.createDiv({ cls: 'setting-item-description' });
     passStatus.style.marginTop = '-10px';
     passStatus.style.marginBottom = '20px';
@@ -1506,7 +1475,7 @@ class NoteRelaySettingTab extends obsidian.PluginSettingTab {
     containerEl.createEl('h3', { text: '3️⃣ Connect Relay' });
 
     const canStart = this.plugin.settings.emailValidated && this.plugin.settings.masterPasswordHash;
-    
+
     if (!canStart) {
       const warningDiv = containerEl.createDiv();
       warningDiv.style.cssText = 'padding: 15px; margin-bottom: 15px; background: rgba(255,152,0,0.1); border-left: 3px solid #ff9800; border-radius: 4px;';
@@ -1538,7 +1507,7 @@ class NoteRelaySettingTab extends obsidian.PluginSettingTab {
       statusDiv.innerHTML = `
         <h4 style="margin-top: 0; color: #4caf50;">✅ Note Relay is Active</h4>
         <div style="margin-top: 10px;"><strong>Remote:</strong> Go to <a href="https://noterelay.io/dashboard" target="_blank">noterelay.io/dashboard</a></div>
-        <div style="margin-top: 10px; font-size: 0.9em; color: var(--text-muted);">Signal ID: ${this.plugin.signalId ? this.plugin.signalId.slice(0,8) + '...' : 'Connecting...'}</div>
+        <div style="margin-top: 10px; font-size: 0.9em; color: var(--text-muted);">Signal ID: ${this.plugin.signalId ? this.plugin.signalId.slice(0, 8) + '...' : 'Connecting...'}</div>
       `;
     }
   }
