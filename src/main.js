@@ -14,7 +14,7 @@ const { join } = require('path');
 let SUPABASE_URL = null;
 let SUPABASE_KEY = null;
 const API_BASE_URL = 'https://noterelay.io';
-const BUILD_VERSION = '2024.12.16-1118';
+const BUILD_VERSION = '2024.12.16-1135';
 const CHUNK_SIZE = 16 * 1024;
 const DEFAULT_SETTINGS = {
   passwordHash: '',
@@ -1024,102 +1024,6 @@ class NoteRelay extends obsidian.Plugin {
                 peer.safeSend({ type: 'ERROR', message: 'ACCESS_DENIED: Invalid password.' });
                 setTimeout(() => peer.destroy(), 1000);
                 return;
-              }
-            }
-            // Guest authentication
-            else if (this.settings.guestList) {
-              console.log('🔍 WebRTC: Verifying guest via backend:', userEmail);
-
-              const localGuest = this.settings.guestList.find(g => g.email === userEmail);
-
-              if (!localGuest) {
-                console.log('❌ WebRTC: Guest not found in local list');
-                peer.safeSend({ type: 'ERROR', message: 'ACCESS_DENIED: You do not have access to this vault.' });
-                setTimeout(() => peer.destroy(), 1000);
-                return;
-              }
-
-              // Verify password hash
-              if (localGuest.passHash !== msg.authHash) {
-                console.log('❌ WebRTC: Guest password incorrect');
-                peer.safeSend({ type: 'ERROR', message: 'ACCESS_DENIED: Invalid password.' });
-                setTimeout(() => peer.destroy(), 1000);
-                return;
-              }
-
-              // Password correct, verify license and backend access
-              try {
-                // First, verify guest has valid license
-                console.log('🔍 WebRTC: Verifying guest license:', userEmail);
-                const licenseResponse = await fetch(`${API_BASE_URL}/api/validate-license`, {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ email: userEmail })
-                });
-
-                const licenseResult = await licenseResponse.json();
-
-                if (!licenseResult.valid) {
-                  console.log('❌ WebRTC: Guest license invalid:', licenseResult.reason || 'No active subscription');
-                  peer.safeSend({ type: 'ERROR', message: 'LICENSE_REQUIRED: You need an active Note Relay subscription to access shared vaults.' });
-                  setTimeout(() => peer.destroy(), 1000);
-                  return;
-                }
-
-                console.log('✅ WebRTC: Guest license valid');
-
-                // Then verify they have access to this vault
-                const response = await fetch(`${API_BASE_URL}/api/guests?route=check-access`, {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({
-                    vaultId: this.settings.dbVaultId,
-                    guestEmail: userEmail
-                  })
-                });
-
-                const result = await response.json();
-
-                if (result.allowed) {
-                  accessGranted = true;
-                  isReadOnly = (localGuest.mode === 'ro');
-                  userIdentifier = userEmail;
-                  console.log(`✅ WebRTC: Guest authenticated - ${userIdentifier} (${localGuest.mode})`);
-                } else {
-                  console.log('❌ WebRTC: Guest revoked in backend:', result.reason || 'Not authorized');
-                  peer.safeSend({ type: 'ERROR', message: 'ACCESS_DENIED: Your access has been revoked.' });
-                  setTimeout(() => peer.destroy(), 1000);
-                  return;
-                }
-              } catch (error) {
-                console.error('⚠️ WebRTC: Backend verification failed:', error);
-                // Backend down - DENY access (fail secure for guests)
-                console.log('❌ WebRTC: Cannot verify guest license/access - backend unavailable');
-                peer.safeSend({ type: 'ERROR', message: 'SERVICE_UNAVAILABLE: Cannot verify your subscription. Please try again later.' });
-                setTimeout(() => peer.destroy(), 1000);
-                return;
-              }
-            }
-          }
-          // Legacy: Check local guest list by userId (for backwards compatibility)
-          else if (msg.userId && this.settings.guestList) {
-            const guest = this.settings.guestList.find(g => g.userId === msg.userId);
-
-            if (guest) {
-              // Block pending guests
-              if (guest.status === 'pending') {
-                console.log('❌ WebRTC: Guest pending verification:', guest.email);
-                peer.safeSend({ type: 'ERROR', message: 'ACCESS_PENDING: Your access is pending verification. Check your email.' });
-                setTimeout(() => peer.destroy(), 1000);
-                return;
-              }
-
-              // Verify password hash
-              if (guest.passHash === msg.authHash) {
-                accessGranted = true;
-                isReadOnly = (guest.mode === 'ro');
-                userIdentifier = guest.email || guest.label || guest.userId;
-                console.log(`✅ WebRTC: Guest authenticated (legacy) - ${userIdentifier} (${guest.mode})`);
               }
             }
           }
