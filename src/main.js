@@ -14,7 +14,7 @@ const { join } = require('path');
 let SUPABASE_URL = null;
 let SUPABASE_KEY = null;
 const API_BASE_URL = 'https://noterelay.io';
-const BUILD_VERSION = '2024.12.16-1358';
+const BUILD_VERSION = '2024.12.16-1421';
 const CHUNK_SIZE = 16 * 1024;
 const DEFAULT_SETTINGS = {
   passwordHash: '',
@@ -472,11 +472,6 @@ class NoteRelay extends obsidian.Plugin {
                   targetFile = this.app.metadataCache.getFirstLinkpathDest(linktext, file.path);
                 }
 
-                // Strategy 2: If no container, try to resolve the app:// URL to a file path
-                if (!targetFile) {
-                  // This is harder because app:// paths are absolute. 
-                  // We'll skip complex reverse-engineering for V1 and rely on Strategy 1.
-                }
 
                 if (targetFile) {
                   const arrayBuffer = await this.app.vault.readBinary(targetFile);
@@ -541,39 +536,84 @@ class NoteRelay extends obsidian.Plugin {
           return;
         }
 
-        // BANDWIDTH GUARD: Block video streaming
-        const VIDEO_EXTS = ['mp4', 'mov', 'avi', 'mkv', 'iso', 'flv', 'webm', 'm4v'];
-        if (VIDEO_EXTS.includes(file.extension.toLowerCase())) {
-          console.log('🚫 Blocked video file request:', file.path);
-          sendCallback('ERROR', { message: 'Media streaming is disabled. Video files cannot be accessed remotely.' });
-          return;
-        }
-
+        // 1. Handle Images (with Optional Resizing)
         const IMAGE_EXTS = ['png', 'jpg', 'jpeg', 'gif', 'svg', 'webp'];
-        if (IMAGE_EXTS.includes(file.extension)) {
+        if (IMAGE_EXTS.includes(file.extension.toLowerCase())) {
           console.log(`Note Relay: Reading Image ${file.path}`);
           const arrayBuffer = await this.app.vault.readBinary(file);
+          
+          // Check for resize request (Thumbnail Mode for Free/Preview)
+          if (msg.options && msg.options.resize) {
+             try {
+               const blob = new Blob([arrayBuffer]);
+               const bitmap = await createImageBitmap(blob);
+               
+               // Calculate new dimensions (max 800px)
+               const MAX_WIDTH = 800;
+               let width = bitmap.width;
+               let height = bitmap.height;
+               
+               if (width > MAX_WIDTH) {
+                 height = Math.round(height * (MAX_WIDTH / width));
+                 width = MAX_WIDTH;
+               }
+               
+               const canvas = document.createElement('canvas');
+               canvas.width = width;
+               canvas.height = height;
+               const ctx = canvas.getContext('2d');
+               ctx.drawImage(bitmap, 0, 0, width, height);
+               
+               // Convert to JPEG 80% quality for thumbnails
+               const dataUrl = canvas.toDataURL('image/jpeg', 0.8);
+               const base64 = dataUrl.split(',')[1];
+               
+               sendCallback('FILE', base64, {
+                 path: msg.path,
+                 isImage: true,
+                 ext: 'jpg', // Thumbnails are always JPEGs
+                 originalExt: file.extension
+               });
+               return;
+             } catch (err) {
+               console.error('Image resize failed, falling back to full size:', err);
+               // Fallthrough to full size
+             }
+          }
+
+          // Full size (Default for Pro Download or Fallback)
           const base64 = Buffer.from(arrayBuffer).toString('base64');
           sendCallback('FILE', base64, {
             path: msg.path,
             isImage: true,
             ext: file.extension
           });
-        } else {
+        } 
+        // 2. Handle Markdown (Text)
+        else if (file.extension === 'md') {
           const content = await this.app.vault.read(file);
           const backlinks = [];
-
-          if (file.extension === 'md') {
-            const resolved = this.app.metadataCache.resolvedLinks;
-            for (const [sourcePath, links] of Object.entries(resolved)) {
-              if (links[msg.path]) backlinks.push(sourcePath);
-            }
+          const resolved = this.app.metadataCache.resolvedLinks;
+          for (const [sourcePath, links] of Object.entries(resolved)) {
+            if (links[msg.path]) backlinks.push(sourcePath);
           }
 
           sendCallback('FILE', {
             data: content,
             backlinks
           }, { path: msg.path });
+        }
+        // 3. Handle All Other Files (Binary - PDF, Video, Zip, etc.)
+        else {
+          // Treat as binary to prevent corruption
+          console.log(`Note Relay: Reading Binary File ${file.path}`);
+          const arrayBuffer = await this.app.vault.readBinary(file);
+          const base64 = Buffer.from(arrayBuffer).toString('base64');
+          sendCallback('FILE', base64, {
+            path: msg.path,
+            isBinary: true,
+            ext: file.extension
+          });
         }
         return;
       }
