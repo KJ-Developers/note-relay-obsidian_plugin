@@ -19287,6 +19287,7 @@ var { createClient } = require_main5();
 var SimplePeer = require_simple_peer();
 var { readFileSync } = require("fs");
 var { join } = require("path");
+var os = require("os");
 var SUPABASE_URL = null;
 var SUPABASE_KEY = null;
 var API_BASE_URL = "https://noterelay.io";

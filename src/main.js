@@ -7,6 +7,7 @@ const { createClient } = require('@supabase/supabase-js');
 const SimplePeer = require('simple-peer');
 const { readFileSync } = require('fs');
 const { join } = require('path');
+const os = require('os');
 
 
 // Supabase credentials loaded dynamically from API (no hardcoded keys)
