@@ -529,44 +529,44 @@ class NoteRelay extends obsidian.Plugin {
     if (IMAGE_EXTS.includes(file.extension.toLowerCase())) {
       console.log(`Note Relay: Reading Image ${file.path}`);
       const arrayBuffer = await this.app.vault.readBinary(file);
-      
+
       // Check for resize request (Thumbnail Mode for Free/Preview)
       if (msg.options && msg.options.resize) {
-         try {
-           const blob = new Blob([arrayBuffer]);
-           const bitmap = await createImageBitmap(blob);
-           
-           // Calculate new dimensions (max 800px)
-           const MAX_WIDTH = 800;
-           let width = bitmap.width;
-           let height = bitmap.height;
-           
-           if (width > MAX_WIDTH) {
-             height = Math.round(height * (MAX_WIDTH / width));
-             width = MAX_WIDTH;
-           }
-           
-           const canvas = document.createElement('canvas');
-           canvas.width = width;
-           canvas.height = height;
-           const ctx = canvas.getContext('2d');
-           ctx.drawImage(bitmap, 0, 0, width, height);
-           
-           // Convert to JPEG 80% quality for thumbnails
-           const dataUrl = canvas.toDataURL('image/jpeg', 0.8);
-           const base64 = dataUrl.split(',')[1];
-           
-           sendCallback('FILE', base64, {
-             path: msg.path,
-             isImage: true,
-             ext: 'jpg', // Thumbnails are always JPEGs
-             originalExt: file.extension
-           });
-           return;
-         } catch (err) {
-           console.error('Image resize failed, falling back to full size:', err);
-           // Fallthrough to full size
-         }
+        try {
+          const blob = new Blob([arrayBuffer]);
+          const bitmap = await createImageBitmap(blob);
+
+          // Calculate new dimensions (max 800px)
+          const MAX_WIDTH = 800;
+          let width = bitmap.width;
+          let height = bitmap.height;
+
+          if (width > MAX_WIDTH) {
+            height = Math.round(height * (MAX_WIDTH / width));
+            width = MAX_WIDTH;
+          }
+
+          const canvas = document.createElement('canvas');
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext('2d');
+          ctx.drawImage(bitmap, 0, 0, width, height);
+
+          // Convert to JPEG 80% quality for thumbnails
+          const dataUrl = canvas.toDataURL('image/jpeg', 0.8);
+          const base64 = dataUrl.split(',')[1];
+
+          sendCallback('FILE', base64, {
+            path: msg.path,
+            isImage: true,
+            ext: 'jpg', // Thumbnails are always JPEGs
+            originalExt: file.extension
+          });
+          return;
+        } catch (err) {
+          console.error('Image resize failed, falling back to full size:', err);
+          // Fallthrough to full size
+        }
       }
 
       // Full size (Default for Pro Download or Fallback)
@@ -576,7 +576,7 @@ class NoteRelay extends obsidian.Plugin {
         isImage: true,
         ext: file.extension
       });
-    } 
+    }
     // 2. Handle Markdown (Text)
     else if (file.extension === 'md') {
       const content = await this.app.vault.read(file);
@@ -1039,8 +1039,42 @@ class NoteRelay extends obsidian.Plugin {
                 userIdentifier = this.settings.userEmail;
                 console.log('Note Relay: Owner authenticated');
               } else {
-                console.log('Note Relay: Access denied');
+                console.log('Note Relay: Owner password mismatch');
                 peer.safeSend({ type: 'ERROR', message: 'ACCESS_DENIED: Invalid password.' });
+                setTimeout(() => peer.destroy(), 1000);
+                return;
+              }
+            } else {
+              // Guest authentication - verify via Supabase RPC
+              console.log('Note Relay: Attempting guest authentication for:', userEmail);
+              try {
+                const { data, error } = await this.supabase.rpc('verify_guest_password', {
+                  p_vault_name: this.app.vault.getName(),
+                  p_owner_email: this.settings.userEmail,
+                  p_password_hash: msg.authHash
+                });
+
+                if (error) {
+                  console.error('Note Relay: Guest auth RPC error:', error);
+                  peer.safeSend({ type: 'ERROR', message: 'ACCESS_DENIED: Authentication failed.' });
+                  setTimeout(() => peer.destroy(), 1000);
+                  return;
+                }
+
+                if (data && data.valid) {
+                  accessGranted = true;
+                  isReadOnly = data.permission === 'read';
+                  userIdentifier = userEmail;
+                  console.log(`Note Relay: Guest authenticated (${data.permission} access)`);
+                } else {
+                  console.log('Note Relay: Guest auth failed:', data?.error || 'Unknown error');
+                  peer.safeSend({ type: 'ERROR', message: `ACCESS_DENIED: ${data?.error || 'Invalid credentials'}` });
+                  setTimeout(() => peer.destroy(), 1000);
+                  return;
+                }
+              } catch (rpcError) {
+                console.error('Note Relay: Guest auth exception:', rpcError);
+                peer.safeSend({ type: 'ERROR', message: 'ACCESS_DENIED: Authentication service unavailable.' });
                 setTimeout(() => peer.destroy(), 1000);
                 return;
               }

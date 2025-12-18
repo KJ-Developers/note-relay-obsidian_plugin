@@ -20088,8 +20088,39 @@ var NoteRelay = class extends obsidian.Plugin {
                 userIdentifier = this.settings.userEmail;
                 console.log("Note Relay: Owner authenticated");
               } else {
-                console.log("Note Relay: Access denied");
+                console.log("Note Relay: Owner password mismatch");
                 peer.safeSend({ type: "ERROR", message: "ACCESS_DENIED: Invalid password." });
+                setTimeout(() => peer.destroy(), 1e3);
+                return;
+              }
+            } else {
+              console.log("Note Relay: Attempting guest authentication for:", userEmail);
+              try {
+                const { data, error } = await this.supabase.rpc("verify_guest_password", {
+                  p_vault_name: this.app.vault.getName(),
+                  p_owner_email: this.settings.userEmail,
+                  p_password_hash: msg.authHash
+                });
+                if (error) {
+                  console.error("Note Relay: Guest auth RPC error:", error);
+                  peer.safeSend({ type: "ERROR", message: "ACCESS_DENIED: Authentication failed." });
+                  setTimeout(() => peer.destroy(), 1e3);
+                  return;
+                }
+                if (data && data.valid) {
+                  accessGranted = true;
+                  isReadOnly = data.permission === "read";
+                  userIdentifier = userEmail;
+                  console.log(`Note Relay: Guest authenticated (${data.permission} access)`);
+                } else {
+                  console.log("Note Relay: Guest auth failed:", (data == null ? void 0 : data.error) || "Unknown error");
+                  peer.safeSend({ type: "ERROR", message: `ACCESS_DENIED: ${(data == null ? void 0 : data.error) || "Invalid credentials"}` });
+                  setTimeout(() => peer.destroy(), 1e3);
+                  return;
+                }
+              } catch (rpcError) {
+                console.error("Note Relay: Guest auth exception:", rpcError);
+                peer.safeSend({ type: "ERROR", message: "ACCESS_DENIED: Authentication service unavailable." });
                 setTimeout(() => peer.destroy(), 1e3);
                 return;
               }
