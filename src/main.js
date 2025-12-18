@@ -1062,8 +1062,8 @@ class NoteRelay extends obsidian.Plugin {
               try {
                 const { data, error } = await this.supabase.rpc('verify_guest_password', {
                   p_vault_name: this.app.vault.getName(),
-                  p_guest_email: userEmail,
-                  p_auth_hash: msg.authHash
+                  p_owner_email: userEmail,
+                  p_password_hash: msg.authHash
                 });
 
                 if (error) {
