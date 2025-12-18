@@ -76,6 +76,12 @@ class NoteRelay extends obsidian.Plugin {
     this.registerDomEvent(document, 'visibilitychange', this.wakeHandler);
     console.log('Note Relay: Wake detection enabled');
 
+    // Keep event loop active to prevent Electron background throttling
+    // This ensures WebRTC data callbacks execute promptly when app is not focused
+    this.keepAliveInterval = setInterval(() => {
+      // Noop - just keeps the event loop from going idle
+    }, 1000);
+
     // Only auto-connect if fully configured (email + password)
     if (this.settings.enableRemoteAccess && this.settings.userEmail && this.settings.masterPasswordHash) {
       setTimeout(() => this.connectSignaling(), 3000); // 3s delay for cold start
@@ -86,6 +92,11 @@ class NoteRelay extends obsidian.Plugin {
 
   onunload() {
     this.disconnectSignaling();
+
+    // Clean up keepalive interval
+    if (this.keepAliveInterval) {
+      clearInterval(this.keepAliveInterval);
+    }
   }
 
   async loadSettings() {

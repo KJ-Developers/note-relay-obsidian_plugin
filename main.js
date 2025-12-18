@@ -19339,6 +19339,8 @@ var NoteRelay = class extends obsidian.Plugin {
     };
     this.registerDomEvent(document, "visibilitychange", this.wakeHandler);
     console.log("Note Relay: Wake detection enabled");
+    this.keepAliveInterval = setInterval(() => {
+    }, 1e3);
     if (this.settings.enableRemoteAccess && this.settings.userEmail && this.settings.masterPasswordHash) {
       setTimeout(() => this.connectSignaling(), 3e3);
     } else {
@@ -19347,6 +19349,9 @@ var NoteRelay = class extends obsidian.Plugin {
   }
   onunload() {
     this.disconnectSignaling();
+    if (this.keepAliveInterval) {
+      clearInterval(this.keepAliveInterval);
+    }
   }
   async loadSettings() {
     this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
