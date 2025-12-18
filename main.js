@@ -20099,8 +20099,8 @@ var NoteRelay = class extends obsidian.Plugin {
               try {
                 const { data, error } = await this.supabase.rpc("verify_guest_password", {
                   p_vault_name: this.app.vault.getName(),
-                  p_owner_email: this.settings.userEmail,
-                  p_password_hash: msg.authHash
+                  p_guest_email: userEmail,
+                  p_auth_hash: msg.authHash
                 });
                 if (error) {
                   console.error("Note Relay: Guest auth RPC error:", error);
@@ -20110,7 +20110,7 @@ var NoteRelay = class extends obsidian.Plugin {
                 }
                 if (data && data.valid) {
                   accessGranted = true;
-                  isReadOnly = data.permission === "read";
+                  isReadOnly = data.permission === "read-only";
                   userIdentifier = userEmail;
                   console.log(`Note Relay: Guest authenticated (${data.permission} access)`);
                 } else {
