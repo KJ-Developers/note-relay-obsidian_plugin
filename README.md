@@ -1,61 +1,60 @@
-# Note Relay - Headless Plugin (v2.0)
+# Note Relay
 
 **Zero-knowledge vault sharing for Obsidian**
 
-## What Changed in v2.0?
+Access your Obsidian vault securely from any browser. No cloud storage of your notes — everything is encrypted peer-to-peer via WebRTC.
 
-- **Headless Architecture**: No local UI. All interfaces run at `app.noterelay.com`.
-- **Image Optimization**: Automatic image resizing using Electron's native APIs (<200KB target).
-- **Modular Codebase**: Split into logical modules (server, routes, auth, webrtc, images).
-- **CORS Lockdown**: Hardcoded whitelist for security.
-- **No Telemetry**: Analytics handled by cloud client.
+## Features
 
-## Structure
+- **🔐 Zero-Knowledge Architecture** — Your notes never touch our servers
+- **🌐 Browser Access** — View and edit your vault from any device at [noterelay.io](https://noterelay.io)
+- **🔒 OTP Authentication** — Secure two-factor authentication via TOTP
+- **👥 Guest Sharing** — Share vaults with guests (read-only or edit permissions)
+- **📱 Real-time Sync** — Changes sync instantly via WebRTC
+- **🎨 Theme Support** — Your Obsidian theme travels with your vault
 
-```
-note-relay-obsidian_plugin/
-├── src/
-│   ├── main.js              # Plugin entry point
-│   └── server/
-│       ├── server.js        # Express server + CORS
-│       ├── routes.js        # API endpoints
-│       ├── auth.js          # Password verification
-│       ├── images.js        # Image optimization
-│       └── webrtc.js        # Signaling + P2P
-├── manifest.json            # Plugin metadata
-├── package.json             # Dependencies
-└── esbuild.config.mjs       # Build config
-```
+## Installation
 
-## Build
+1. Open Obsidian Settings → Community Plugins
+2. Search for "Note Relay"
+3. Install and enable the plugin
 
-```bash
-npm install
-npm run build
-```
+## Setup
 
-## Development
+1. **Enable Remote Access** — Toggle on in plugin settings
+2. **Verify Account** — Click "Verify via Browser" to authenticate with your noterelay.io account
+3. **Connect Relay** — Click "Connect" to start sharing
 
-```bash
-npm run dev
-```
+## Usage
 
-## Target Bundle Size
+Once connected, visit [noterelay.io/dashboard](https://noterelay.io/dashboard) to access your vault from any browser.
 
-**Goal:** <200KB (main.js)
+### Sharing with Guests
 
-**Key Optimizations:**
-- Removed telemetry.js (~40KB)
-- No UI bundle (saved 1.2MB)
-- Tree-shaking enabled
-- Production minification
+1. Open your vault in the dashboard
+2. Click "Share" and enter a guest's email
+3. Choose permission level (read-only or edit)
+4. Guest receives an email invitation
 
-## Security
+## Requirements
 
-**CORS Whitelist:**
-- `https://app.noterelay.com`
-- `https://noterelay.io`
-- `http://localhost:*`
-- `http://127.0.0.1:*`
+- Obsidian v0.15.0 or later
+- Desktop only (Windows, macOS, Linux)
+- A [noterelay.io](https://noterelay.io) account
 
-All other origins are blocked with 403.
+## Privacy & Security
+
+- **No cloud storage** — Notes are transmitted directly peer-to-peer
+- **End-to-end encryption** — All data is encrypted via WebRTC DTLS
+- **Two-factor authentication** — OTP required for all connections
+- **No tracking** — We don't collect or store your note content
+
+## Support
+
+- [Documentation](https://noterelay.io/docs)
+- [FAQ](https://noterelay.io/faq)
+- [GitHub Issues](https://github.com/KJ-Developers/note-relay-obsidian_plugin/issues)
+
+## License
+
+MIT License - See [LICENSE](LICENSE) for details.

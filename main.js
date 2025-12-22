@@ -19373,15 +19373,11 @@ var NoteRelay = class extends obsidian.Plugin {
     if (!this.settings.vaultId) {
       this.settings.vaultId = crypto.randomUUID();
       await this.saveSettings();
-      console.log("Generated new vaultId:", this.settings.vaultId);
     }
-    console.log("Plugin ID:", this.pluginId);
     const fingerprint = vaultPath + "|" + os.platform() + "|" + os.hostname();
     this.nodeId = await hashString(fingerprint);
     this.nodeName = os.hostname();
     this.nodePlatform = os.platform();
-    console.log("Note Relay: Device -", this.nodePlatform, "/", this.nodeName);
-    console.log(`%c PORTAL ${BUILD_VERSION} READY`, "color: #00ff00; font-weight: bold; background: #000;");
     this.statusBar = this.addStatusBarItem();
     this.isConnected = false;
     this.connectSignaling();
@@ -19392,9 +19388,7 @@ var NoteRelay = class extends obsidian.Plugin {
       }
     };
     this.registerDomEvent(document, "visibilitychange", this.wakeHandler);
-    console.log("Note Relay: Wake detection enabled");
     this.registerObsidianProtocolHandler("noterelay", async (params) => {
-      console.log("Note Relay: Received OAuth callback", params);
       if (params.token && params.email && params.vaultId) {
         const valid = await this.validatePluginToken(params.token, params.email, params.vaultId);
         if (valid) {
@@ -19412,7 +19406,6 @@ var NoteRelay = class extends obsidian.Plugin {
         new obsidian.Notice("\u274C Invalid callback - missing parameters");
       }
     });
-    console.log("Note Relay: OAuth URI handler registered");
     this.keepAliveInterval = setInterval(() => {
     }, 1e3);
     if (this.settings.enableRemoteAccess && this.settings.userEmail && this.settings.emailValidated) {
@@ -19445,7 +19438,6 @@ var NoteRelay = class extends obsidian.Plugin {
   }
   async registerVaultAndGetSignalId() {
     if (!this.settings.userEmail) {
-      console.log("No user email configured");
       return null;
     }
     try {
@@ -19486,7 +19478,6 @@ var NoteRelay = class extends obsidian.Plugin {
       }
       const result = await response.json();
       if (result.success) {
-        console.log("Vault registered! Signal ID:", result.signalId, "DB Vault ID:", result.vaultId, "User ID:", result.userId, "Plan:", result.planType);
         this.signalId = result.signalId;
         this.isConnected = true;
         this.startHeartbeat();
@@ -19523,7 +19514,6 @@ var NoteRelay = class extends obsidian.Plugin {
   async fetchTurnCredentials() {
     if (!this.settings.userEmail) return;
     try {
-      console.log("Fetching TURN credentials for host...");
       const response = await fetch("https://noterelay.io/api/turn-credentials", {
         method: "POST",
         headers: {
@@ -19537,7 +19527,6 @@ var NoteRelay = class extends obsidian.Plugin {
         const data = await response.json();
         if (data.iceServers) {
           this.iceServers = data.iceServers;
-          console.log("Note Relay: TURN credentials obtained");
         }
       } else {
         const errorText = await response.text();
@@ -19559,7 +19548,6 @@ var NoteRelay = class extends obsidian.Plugin {
   }
   startHeartbeat() {
     if (this.heartbeatInterval) clearInterval(this.heartbeatInterval);
-    console.log("Note Relay: Starting API Heartbeat (5m)...");
     this.sendHeartbeat();
     this.heartbeatInterval = setInterval(async () => {
       await this.sendHeartbeat();
@@ -19595,7 +19583,6 @@ var NoteRelay = class extends obsidian.Plugin {
   }
   disconnectSignaling() {
     var _a;
-    console.log("Disconnecting signaling...");
     if (this.heartbeatInterval) {
       clearInterval(this.heartbeatInterval);
       this.heartbeatInterval = null;
@@ -19614,7 +19601,6 @@ var NoteRelay = class extends obsidian.Plugin {
       (_a = this.statusBar) == null ? void 0 : _a.setText("Note Relay: Disconnected");
       if (this.statusBar) this.statusBar.style.color = "";
     }
-    console.log("Signaling disconnected. Offline mode.");
   }
   /**
    * Unified command processor for WebRTC mode
@@ -19786,7 +19772,6 @@ var NoteRelay = class extends obsidian.Plugin {
     }
     const IMAGE_EXTS = ["png", "jpg", "jpeg", "gif", "svg", "webp"];
     if (IMAGE_EXTS.includes(file.extension.toLowerCase())) {
-      console.log(`Note Relay: Reading Image ${file.path}`);
       const arrayBuffer = await this.app.vault.readBinary(file);
       if (msg.options && msg.options.resize) {
         try {
@@ -19836,7 +19821,6 @@ var NoteRelay = class extends obsidian.Plugin {
         backlinks
       }, { path: msg.path });
     } else {
-      console.log(`Note Relay: Reading Binary File ${file.path}`);
       const arrayBuffer = await this.app.vault.readBinary(file);
       const base64 = import_buffer.Buffer.from(arrayBuffer).toString("base64");
       sendCallback("FILE", base64, {
@@ -20145,7 +20129,6 @@ var NoteRelay = class extends obsidian.Plugin {
       const totalBytes = fullString.length;
       let offset = 0;
       if (totalBytes > 1e5) {
-        console.log(`Note Relay: Sending Large File (${Math.round(totalBytes / 1024)}KB)`);
       }
       while (offset < totalBytes) {
         const chunk = fullString.slice(offset, offset + CHUNK_SIZE);
@@ -20183,14 +20166,12 @@ var NoteRelay = class extends obsidian.Plugin {
               accessGranted = true;
               isReadOnly = false;
               userIdentifier = this.settings.userEmail;
-              console.log("Note Relay: Owner authenticated (OTP pre-validated)");
             } else {
-              console.log("Note Relay: Attempting guest authentication for:", userEmail);
               try {
-                const { data, error } = await this.supabase.rpc("verify_guest_password", {
+                const { data, error } = await this.supabase.rpc("verify_guest_otp", {
                   p_vault_name: this.app.vault.getName(),
                   p_owner_email: this.settings.userEmail,
-                  p_password_hash: msg.authHash
+                  p_auth_hash: msg.authHash
                 });
                 if (error) {
                   console.error("Note Relay: Guest auth RPC error:", error);
@@ -20202,9 +20183,7 @@ var NoteRelay = class extends obsidian.Plugin {
                   accessGranted = true;
                   isReadOnly = data.permission === "read-only";
                   userIdentifier = userEmail;
-                  console.log(`Note Relay: Guest authenticated (${data.permission} access)`);
                 } else {
-                  console.log("Note Relay: Guest auth failed:", (data == null ? void 0 : data.error) || "Unknown error");
                   peer.safeSend({ type: "ERROR", message: `ACCESS_DENIED: ${(data == null ? void 0 : data.error) || "Invalid credentials"}` });
                   setTimeout(() => peer.destroy(), 1e3);
                   return;
@@ -20229,7 +20208,6 @@ var NoteRelay = class extends obsidian.Plugin {
               styles: []
             });
           } else {
-            console.log("\u274C WebRTC: Authentication failed - invalid credentials or not in ACL");
             peer.safeSend({ type: "ERROR", message: "ACCESS_DENIED: Invalid credentials or not authorized" });
             setTimeout(() => peer.destroy(), 1e3);
           }
@@ -20238,7 +20216,6 @@ var NoteRelay = class extends obsidian.Plugin {
         if (!isAuthenticated) return;
         const writeCommands = ["CREATE_FILE", "SAVE_FILE", "DELETE_FILE", "RENAME_FILE", "CREATE_FOLDER"];
         if (peerReadOnly && writeCommands.includes(msg.cmd)) {
-          console.log(`\u{1F512} Blocked ${msg.cmd} command - read-only mode`);
           peer.safeSend({ type: "ERROR", message: "READ-ONLY MODE: Editing is disabled" });
           return;
         }
@@ -20301,25 +20278,20 @@ var NoteRelay = class extends obsidian.Plugin {
   }
   async checkConnectionHealth() {
     if (!this.supabase || !this.settings.userEmail) {
-      console.log("Note Relay: Connection health check - not connected");
       return;
     }
     const timeSinceLastHeartbeat = Date.now() - (this.lastHeartbeatTime || 0);
     if (timeSinceLastHeartbeat > 6 * 60 * 1e3) {
-      console.log("Note Relay: Connection stale, reconnecting...");
       await this.connectSignaling();
     } else {
-      console.log("Note Relay: Connection healthy");
     }
   }
   async connectSignaling() {
     var _a, _b;
     if (!this.settings.enableRemoteAccess) {
-      console.log("Note Relay: Remote access disabled. Staying offline.");
       return;
     }
     if (!this.settings.userEmail) {
-      console.log("Note Relay: No user email found. Staying offline (Local Mode only).");
       return;
     }
     this.disconnectSignaling();
@@ -20345,7 +20317,6 @@ var NoteRelay = class extends obsidian.Plugin {
         SUPABASE_URL = initData.supabase.url;
         SUPABASE_KEY = initData.supabase.anonKey;
         this.iceServers = initData.iceServers;
-        console.log("\u2705 Connection credentials loaded dynamically");
       } catch (err) {
         console.error("Failed to fetch connection credentials:", err);
         new obsidian.Notice("Note Relay: Connection initialization failed");
@@ -20364,14 +20335,11 @@ var NoteRelay = class extends obsidian.Plugin {
     } else {
       (_b = this.statusBar) == null ? void 0 : _b.setText(`Note Relay: Active`);
     }
-    console.log("\u{1F3A7} Host listening for offers with filter: target=eq." + ID);
     this.channel = this.supabase.channel("host-channel").on(
       "postgres_changes",
       { event: "INSERT", schema: "public", table: "signaling", filter: `target=eq.${ID}` },
       (payload) => {
-        console.log("\u{1F4E8} Received signaling message:", payload.new);
         if (payload.new.type === "offer") {
-          console.log("\u2705 Offer received from:", payload.new.source);
           new obsidian.Notice(`Incoming Connection...`);
           this.answerCall(payload.new.source, payload.new.payload);
         }
@@ -20399,11 +20367,9 @@ var NoteRelay = class extends obsidian.Plugin {
       "--tag-background",
       "--tag-color"
     ];
-    console.log("\u{1F3A8} THEME EXTRACTION DEBUG:");
     let rootVars = ":root {\n";
     essentialVars.forEach((varName) => {
       const value = bodyStyles.getPropertyValue(varName).trim();
-      console.log(`  ${varName}: ${value || "NOT FOUND"}`);
       if (value) {
         rootVars += `  ${varName}: ${value} !important;
 `;
@@ -20411,8 +20377,6 @@ var NoteRelay = class extends obsidian.Plugin {
     });
     rootVars += "}\n";
     allCSS.push(rootVars);
-    console.log("\u{1F4CB} Root vars block:", rootVars);
-    console.log("\u{1F4CA} Total stylesheet count:", document.styleSheets.length);
     Array.from(document.styleSheets).forEach((sheet) => {
       try {
         if (sheet.cssRules) {
@@ -20506,7 +20470,6 @@ var NoteRelay = class extends obsidian.Plugin {
       } catch (e) {
       }
     });
-    console.log("\u{1F3A8} Extracted", pluginCSS.length - 1, "CSS rules for", baseClassName);
     return pluginCSS.join("\n");
   }
   getMimeType(ext) {
