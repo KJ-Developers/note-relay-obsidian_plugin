@@ -20577,7 +20577,7 @@ var NoteRelaySettingTab = class extends obsidian.PluginSettingTab {
           if (!confirm) return;
           this.plugin.disconnectSignaling();
         }
-        const url = `https://noterelay.io/plugin-auth?vaultId=${encodeURIComponent(this.plugin.settings.vaultId)}`;
+        const url = `https://noterelay.io/plugin-auth?vaultId=${encodeURIComponent(this.plugin.settings.vaultId)}&vaultName=${encodeURIComponent(this.plugin.app.vault.getName())}`;
         window.open(url);
         new obsidian.Notice("\u{1F510} Complete verification in your browser, then return here.");
       })).addButton((btn) => btn.setButtonText("Logout").setWarning().onClick(async () => {
@@ -20596,7 +20596,7 @@ var NoteRelaySettingTab = class extends obsidian.PluginSettingTab {
         <span style="color: var(--text-muted);">Click below to verify your noterelay.io account via browser login.</span>
       `;
       new obsidian.Setting(containerEl).setName("Verify Account").setDesc("Opens your browser to log in and verify with OTP").addButton((btn) => btn.setButtonText("Verify via Browser").setCta().onClick(() => {
-        const url = `https://noterelay.io/plugin-auth?vaultId=${encodeURIComponent(this.plugin.settings.vaultId)}`;
+        const url = `https://noterelay.io/plugin-auth?vaultId=${encodeURIComponent(this.plugin.settings.vaultId)}&vaultName=${encodeURIComponent(this.plugin.app.vault.getName())}`;
         window.open(url);
         new obsidian.Notice("\u{1F510} Complete verification in your browser, then return here.");
       }));

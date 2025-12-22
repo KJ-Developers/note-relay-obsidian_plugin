@@ -1660,7 +1660,7 @@ class NoteRelaySettingTab extends obsidian.PluginSettingTab {
               this.plugin.disconnectSignaling();
             }
             // Open browser for re-verification
-            const url = `https://noterelay.io/plugin-auth?vaultId=${encodeURIComponent(this.plugin.settings.vaultId)}`;
+            const url = `https://noterelay.io/plugin-auth?vaultId=${encodeURIComponent(this.plugin.settings.vaultId)}&vaultName=${encodeURIComponent(this.plugin.app.vault.getName())}`;
             window.open(url);
             new obsidian.Notice('🔐 Complete verification in your browser, then return here.');
           }))
@@ -1693,7 +1693,7 @@ class NoteRelaySettingTab extends obsidian.PluginSettingTab {
           .setCta()
           .onClick(() => {
             // Open browser for OAuth verification
-            const url = `https://noterelay.io/plugin-auth?vaultId=${encodeURIComponent(this.plugin.settings.vaultId)}`;
+            const url = `https://noterelay.io/plugin-auth?vaultId=${encodeURIComponent(this.plugin.settings.vaultId)}&vaultName=${encodeURIComponent(this.plugin.app.vault.getName())}`;
             window.open(url);
             new obsidian.Notice('🔐 Complete verification in your browser, then return here.');
           }));
