@@ -19289,10 +19289,15 @@ var { readFileSync } = require("fs");
 var { join } = require("path");
 var os = require("os");
 var originalConsoleLog = console.log;
+var originalConsoleWarn = console.warn;
+var suppressGoTrue = (msg) => typeof msg === "string" && msg.includes("Multiple GoTrueClient instances");
 console.log = (...args) => {
-  var _a, _b;
-  if ((_b = (_a = args[0]) == null ? void 0 : _a.includes) == null ? void 0 : _b.call(_a, "Multiple GoTrueClient instances")) return;
+  if (suppressGoTrue(args[0])) return;
   originalConsoleLog.apply(console, args);
+};
+console.warn = (...args) => {
+  if (suppressGoTrue(args[0])) return;
+  originalConsoleWarn.apply(console, args);
 };
 var SUPABASE_URL = null;
 var SUPABASE_KEY = null;

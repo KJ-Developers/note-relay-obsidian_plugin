@@ -11,9 +11,15 @@ const os = require('os');
 
 // Suppress Supabase "Multiple GoTrueClient instances" warning (benign, expected in plugin)
 const originalConsoleLog = console.log;
+const originalConsoleWarn = console.warn;
+const suppressGoTrue = (msg) => typeof msg === 'string' && msg.includes('Multiple GoTrueClient instances');
 console.log = (...args) => {
-  if (args[0]?.includes?.('Multiple GoTrueClient instances')) return;
+  if (suppressGoTrue(args[0])) return;
   originalConsoleLog.apply(console, args);
+};
+console.warn = (...args) => {
+  if (suppressGoTrue(args[0])) return;
+  originalConsoleWarn.apply(console, args);
 };
 
 
