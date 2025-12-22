@@ -8,11 +8,18 @@ Access your Obsidian vault securely from any browser. No cloud storage of your n
 
 - **🔐 Zero-Knowledge Architecture** — Your notes never touch our servers
 - **🌐 Browser Access** — View and edit your vault from any device at [noterelay.io](https://noterelay.io)
-- **� Dataview Support** — Dynamic queries render live, not just as code blocks
-- **�🔒 OTP Authentication** — Secure two-factor authentication via TOTP
+- **📊 Dataview Support** — Dynamic queries render live, not just as code blocks
+- **🔒 OTP Authentication** — Secure two-factor authentication via TOTP
 - **👥 Guest Sharing** — Share vaults with guests (read-only or edit permissions)
 - **🎨 Theme Support** — Your Obsidian theme travels with your vault
 - **📈 Vault Insights** — Optional analytics to track page views and activity
+- **🌍 Works Anywhere** — Connects through firewalls and restrictive networks
+
+## Pricing Philosophy
+
+We charge only for infrastructure costs — the secure relay servers that enable your connection. Your notes are never stored on our servers, so you're paying for access, not storage.
+
+**Pricing starts at $1.99/month** — see [noterelay.io](https://noterelay.io) for details.
 
 ## Plans
 
@@ -23,8 +30,6 @@ Access your Obsidian vault securely from any browser. No cloud storage of your n
 | Access shared vaults | ✅ | ✅ | ✅ |
 | Share your vaults with guests | ❌ | ❌ | ✅ |
 | Vault Insights (optional) | Basic | Basic | Advanced |
-
-See [noterelay.io](https://noterelay.io) for pricing details.
 
 ## Installation
 
