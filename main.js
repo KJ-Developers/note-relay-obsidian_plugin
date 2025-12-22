@@ -19393,6 +19393,26 @@ var NoteRelay = class extends obsidian.Plugin {
     };
     this.registerDomEvent(document, "visibilitychange", this.wakeHandler);
     console.log("Note Relay: Wake detection enabled");
+    this.registerObsidianProtocolHandler("noterelay", async (params) => {
+      console.log("Note Relay: Received OAuth callback", params);
+      if (params.token && params.email && params.vaultId) {
+        const valid = await this.validatePluginToken(params.token, params.email, params.vaultId);
+        if (valid) {
+          this.settings.userEmail = params.email;
+          this.settings.emailValidated = true;
+          await this.saveSettings();
+          new obsidian.Notice("\u2705 Account verified! You can now connect.");
+          this.app.setting.close();
+          this.app.setting.open();
+          this.app.setting.openTabById(this.manifest.id);
+        } else {
+          new obsidian.Notice("\u274C Token expired or invalid. Please try again.");
+        }
+      } else {
+        new obsidian.Notice("\u274C Invalid callback - missing parameters");
+      }
+    });
+    console.log("Note Relay: OAuth URI handler registered");
     this.keepAliveInterval = setInterval(() => {
     }, 1e3);
     if (this.settings.enableRemoteAccess && this.settings.userEmail && this.settings.emailValidated) {
@@ -19480,6 +19500,24 @@ var NoteRelay = class extends obsidian.Plugin {
       console.error("Vault registration error:", error);
       new obsidian.Notice("Failed to register vault: " + error.message);
       return null;
+    }
+  }
+  // Validate OAuth token from browser callback
+  async validatePluginToken(token, email, vaultId) {
+    try {
+      const response = await fetch("https://noterelay.io/api/plugin-token?route=validate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token, email, vaultId })
+      });
+      if (response.ok) {
+        const result = await response.json();
+        return result.success === true;
+      }
+      return false;
+    } catch (error) {
+      console.error("Token validation error:", error);
+      return false;
     }
   }
   async fetchTurnCredentials() {
@@ -20509,48 +20547,30 @@ var NoteRelaySettingTab = class extends obsidian.PluginSettingTab {
       this.display();
     }));
     containerEl.createEl("h3", { text: "2\uFE0F\u20E3 Account" });
-    new obsidian.Setting(containerEl).setName("Email Address").setDesc("Your noterelay.io account email").addText((text) => {
-      text.setPlaceholder("you@example.com").setValue(this.plugin.settings.userEmail || "");
-      text.inputEl.addEventListener("blur", async () => {
-        const value = text.getValue().trim();
-        if (!value) return;
-        if (value === this.plugin.settings.userEmail && this.plugin.settings.emailValidated) return;
-        try {
-          const response = await fetch(`${API_BASE_URL}/api/plugin-init`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ email: value, vaultId: this.plugin.settings.vaultId })
-          });
-          if (response.ok) {
-            this.plugin.settings.userEmail = value;
-            this.plugin.settings.emailValidated = true;
-            await this.plugin.saveSettings();
-            new obsidian.Notice("\u2705 Account verified");
-          } else if (response.status === 404) {
-            this.plugin.settings.emailValidated = false;
-            await this.plugin.saveSettings();
-            new obsidian.Notice("\u274C Account not found. Sign up at noterelay.io first.");
-          } else {
-            new obsidian.Notice("\u26A0\uFE0F Could not verify account");
-          }
-        } catch (err) {
-          new obsidian.Notice("\u26A0\uFE0F Network error verifying account");
-        }
-        this.display();
-      });
-      text.inputEl.addEventListener("keypress", async (e) => {
-        if (e.key === "Enter") text.inputEl.blur();
-      });
-    });
-    const emailStatus = containerEl.createDiv({ cls: "setting-item-description" });
-    emailStatus.style.marginTop = "-10px";
-    emailStatus.style.marginBottom = "20px";
-    if (this.plugin.settings.emailValidated) {
-      emailStatus.setText("\u2705 Account verified");
-    } else if (this.plugin.settings.userEmail) {
-      emailStatus.setText("\u26A0\uFE0F Account not verified - press Tab to verify");
+    if (this.plugin.settings.emailValidated && this.plugin.settings.userEmail) {
+      const verifiedDiv = containerEl.createDiv();
+      verifiedDiv.style.cssText = "padding: 15px; margin-bottom: 15px; background: rgba(76,175,80,0.1); border-left: 3px solid #4caf50; border-radius: 4px;";
+      verifiedDiv.innerHTML = `
+        <strong style="color: #4caf50;">\u2705 Account Verified</strong><br>
+        <span style="color: var(--text-muted);">${this.plugin.settings.userEmail}</span>
+      `;
+      new obsidian.Setting(containerEl).setName("Change Account").setDesc("Verify a different noterelay.io account").addButton((btn) => btn.setButtonText("Re-verify").onClick(() => {
+        const url = `https://noterelay.io/plugin-auth?vaultId=${encodeURIComponent(this.plugin.settings.vaultId)}`;
+        window.open(url);
+        new obsidian.Notice("\u{1F510} Complete verification in your browser, then return here.");
+      }));
     } else {
-      emailStatus.setText("Enter your noterelay.io email");
+      const notVerifiedDiv = containerEl.createDiv();
+      notVerifiedDiv.style.cssText = "padding: 15px; margin-bottom: 15px; background: rgba(124,77,255,0.1); border-left: 3px solid #7c4dff; border-radius: 4px;";
+      notVerifiedDiv.innerHTML = `
+        <strong>\u{1F510} Verification Required</strong><br>
+        <span style="color: var(--text-muted);">Click below to verify your noterelay.io account via browser login.</span>
+      `;
+      new obsidian.Setting(containerEl).setName("Verify Account").setDesc("Opens your browser to log in and verify with OTP").addButton((btn) => btn.setButtonText("Verify via Browser").setCta().onClick(() => {
+        const url = `https://noterelay.io/plugin-auth?vaultId=${encodeURIComponent(this.plugin.settings.vaultId)}`;
+        window.open(url);
+        new obsidian.Notice("\u{1F510} Complete verification in your browser, then return here.");
+      }));
     }
     containerEl.createEl("h3", { text: "3\uFE0F\u20E3 Connect Relay" });
     const canStart = this.plugin.settings.enableRemoteAccess && this.plugin.settings.emailValidated;
@@ -20560,7 +20580,7 @@ var NoteRelaySettingTab = class extends obsidian.PluginSettingTab {
       if (!this.plugin.settings.enableRemoteAccess) {
         warningDiv.innerHTML = "<strong>\u26A0\uFE0F Step 1 incomplete</strong><br>Enable remote access above.";
       } else if (!this.plugin.settings.emailValidated) {
-        warningDiv.innerHTML = "<strong>\u26A0\uFE0F Step 2 incomplete</strong><br>Enter a valid noterelay.io email and press Tab.";
+        warningDiv.innerHTML = "<strong>\u26A0\uFE0F Step 2 incomplete</strong><br>Verify your account via browser.";
       }
     }
     new obsidian.Setting(containerEl).setName("Relay Control").setDesc(this.plugin.isConnected ? "\u{1F7E2} Relay is connected" : "\u26AA Relay disconnected").addButton((button) => button.setButtonText(this.plugin.isConnected ? "Disconnect" : "Connect").setDisabled(!canStart).onClick(async () => {
