@@ -8,10 +8,23 @@ Access your Obsidian vault securely from any browser. No cloud storage of your n
 
 - **🔐 Zero-Knowledge Architecture** — Your notes never touch our servers
 - **🌐 Browser Access** — View and edit your vault from any device at [noterelay.io](https://noterelay.io)
-- **🔒 OTP Authentication** — Secure two-factor authentication via TOTP
+- **� Dataview Support** — Dynamic queries render live, not just as code blocks
+- **�🔒 OTP Authentication** — Secure two-factor authentication via TOTP
 - **👥 Guest Sharing** — Share vaults with guests (read-only or edit permissions)
-- **📱 Real-time Sync** — Changes sync instantly via WebRTC
 - **🎨 Theme Support** — Your Obsidian theme travels with your vault
+- **📈 Vault Insights** — Optional analytics to track page views and activity
+
+## Plans
+
+| Feature | Free | Base | Pro |
+|---------|------|------|-----|
+| Read your vault from browser | ✅ | ✅ | ✅ |
+| Edit your vault from browser | ❌ | ✅ | ✅ |
+| Access shared vaults | ✅ | ✅ | ✅ |
+| Share your vaults with guests | ❌ | ❌ | ✅ |
+| Vault Insights (optional) | Basic | Basic | Advanced |
+
+See [noterelay.io](https://noterelay.io) for pricing details.
 
 ## Installation
 
@@ -29,7 +42,7 @@ Access your Obsidian vault securely from any browser. No cloud storage of your n
 
 Once connected, visit [noterelay.io/dashboard](https://noterelay.io/dashboard) to access your vault from any browser.
 
-### Sharing with Guests
+### Sharing with Guests (Pro)
 
 1. Open your vault in the dashboard
 2. Click "Share" and enter a guest's email

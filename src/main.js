@@ -114,9 +114,7 @@ class NoteRelay extends obsidian.Plugin {
     if (!this.settings.vaultId) {
       this.settings.vaultId = crypto.randomUUID();
       await this.saveSettings();
-      // console.log('Generated new vaultId:', this.settings.vaultId);
     }
-    // console.log('Plugin ID:', this.pluginId);
 
     // DETERMINISTIC DEVICE FINGERPRINT (no localStorage needed)
     // Unique per: vault path + OS platform + hostname
@@ -124,9 +122,7 @@ class NoteRelay extends obsidian.Plugin {
     this.nodeId = await hashString(fingerprint);
     this.nodeName = os.hostname();
     this.nodePlatform = os.platform();
-    // console.log('Note Relay: Device -', this.nodePlatform, '/', this.nodeName);
 
-    // console.log(`%c PORTAL ${BUILD_VERSION} READY`, 'color: #00ff00; font-weight: bold; background: #000;');
     this.statusBar = this.addStatusBarItem();
     this.isConnected = false;
 
@@ -144,12 +140,10 @@ class NoteRelay extends obsidian.Plugin {
     };
 
     this.registerDomEvent(document, 'visibilitychange', this.wakeHandler);
-    // console.log('Note Relay: Wake detection enabled');
 
     // Register URI handler for OAuth callback from browser
     // Receives: obsidian://noterelay?token=xxx&email=xxx&vaultId=xxx
     this.registerObsidianProtocolHandler('noterelay', async (params) => {
-      // console.log('Note Relay: Received OAuth callback', params);
 
       if (params.token && params.email && params.vaultId) {
         // Validate token with API
@@ -172,7 +166,6 @@ class NoteRelay extends obsidian.Plugin {
         new obsidian.Notice('❌ Invalid callback - missing parameters');
       }
     });
-    // console.log('Note Relay: OAuth URI handler registered');
 
     // Keep event loop active to prevent Electron background throttling
     // This ensures WebRTC data callbacks execute promptly when app is not focused
@@ -230,7 +223,6 @@ class NoteRelay extends obsidian.Plugin {
 
   async registerVaultAndGetSignalId() {
     if (!this.settings.userEmail) {
-      // console.log('No user email configured');
       return null;
     }
 
@@ -279,7 +271,6 @@ class NoteRelay extends obsidian.Plugin {
       const result = await response.json();
 
       if (result.success) {
-        // console.log('Vault registered! Signal ID:', result.signalId, 'DB Vault ID:', result.vaultId, 'User ID:', result.userId, 'Plan:', result.planType);
         this.signalId = result.signalId; this.isConnected = true;
 
         this.startHeartbeat();
@@ -321,7 +312,6 @@ class NoteRelay extends obsidian.Plugin {
     if (!this.settings.userEmail) return;
 
     try {
-      // console.log('Fetching TURN credentials for host...');
       const response = await fetch('https://noterelay.io/api/turn-credentials', {
         method: 'POST',
         headers: {
@@ -336,7 +326,6 @@ class NoteRelay extends obsidian.Plugin {
         const data = await response.json();
         if (data.iceServers) {
           this.iceServers = data.iceServers;
-          // console.log('Note Relay: TURN credentials obtained');
         }
       } else {
         const errorText = await response.text();
@@ -360,7 +349,6 @@ class NoteRelay extends obsidian.Plugin {
   startHeartbeat() {
     if (this.heartbeatInterval) clearInterval(this.heartbeatInterval);
 
-    // console.log('Note Relay: Starting API Heartbeat (5m)...');
 
     // 1. Immediate Ping
     this.sendHeartbeat();
@@ -408,7 +396,6 @@ class NoteRelay extends obsidian.Plugin {
   }
 
   disconnectSignaling() {
-    // console.log('Disconnecting signaling...');
 
     // Stop heartbeat
     if (this.heartbeatInterval) {
@@ -432,7 +419,6 @@ class NoteRelay extends obsidian.Plugin {
       this.statusBar?.setText('Note Relay: Disconnected');
       if (this.statusBar) this.statusBar.style.color = '';
     }
-    // console.log('Signaling disconnected. Offline mode.');
   }
 
   /**
@@ -658,7 +644,6 @@ class NoteRelay extends obsidian.Plugin {
     // 1. Handle Images (with Optional Resizing)
     const IMAGE_EXTS = ['png', 'jpg', 'jpeg', 'gif', 'svg', 'webp'];
     if (IMAGE_EXTS.includes(file.extension.toLowerCase())) {
-      // console.log(`Note Relay: Reading Image ${file.path}`);
       const arrayBuffer = await this.app.vault.readBinary(file);
 
       // Check for resize request (Thumbnail Mode for Free/Preview)
@@ -725,7 +710,6 @@ class NoteRelay extends obsidian.Plugin {
     // 3. Handle All Other Files (Binary - PDF, Video, Zip, etc.)
     else {
       // Treat as binary to prevent corruption
-      // console.log(`Note Relay: Reading Binary File ${file.path}`);
       const arrayBuffer = await this.app.vault.readBinary(file);
       const base64 = Buffer.from(arrayBuffer).toString('base64');
       sendCallback('FILE', base64, {
@@ -1118,7 +1102,6 @@ class NoteRelay extends obsidian.Plugin {
       let offset = 0;
 
       if (totalBytes > 100000) {
-        // console.log(`Note Relay: Sending Large File (${Math.round(totalBytes / 1024)}KB)`);
       }
 
       while (offset < totalBytes) {
@@ -1168,10 +1151,8 @@ class NoteRelay extends obsidian.Plugin {
               accessGranted = true;
               isReadOnly = false;
               userIdentifier = this.settings.userEmail;
-              // console.log('Note Relay: Owner authenticated (OTP pre-validated)');
             } else {
               // Guest authentication - verify via Supabase RPC
-              // console.log('Note Relay: Attempting guest authentication for:', userEmail);
               try {
                 const { data, error } = await this.supabase.rpc('verify_guest_otp', {
                   p_vault_name: this.app.vault.getName(),
@@ -1190,9 +1171,7 @@ class NoteRelay extends obsidian.Plugin {
                   accessGranted = true;
                   isReadOnly = data.permission === 'read-only';
                   userIdentifier = userEmail;
-                  // console.log(`Note Relay: Guest authenticated (${data.permission} access)`);
                 } else {
-                  // console.log('Note Relay: Guest auth failed:', data?.error || 'Unknown error');
                   peer.safeSend({ type: 'ERROR', message: `ACCESS_DENIED: ${data?.error || 'Invalid credentials'}` });
                   setTimeout(() => peer.destroy(), 1000);
                   return;
@@ -1220,7 +1199,6 @@ class NoteRelay extends obsidian.Plugin {
 
             // Audit log the connection
           } else {
-            // console.log('❌ WebRTC: Authentication failed - invalid credentials or not in ACL');
             peer.safeSend({ type: 'ERROR', message: 'ACCESS_DENIED: Invalid credentials or not authorized' });
             setTimeout(() => peer.destroy(), 1000);
           }
@@ -1234,7 +1212,6 @@ class NoteRelay extends obsidian.Plugin {
         // FIXED: Updated to match actual command names
         const writeCommands = ['CREATE_FILE', 'SAVE_FILE', 'DELETE_FILE', 'RENAME_FILE', 'CREATE_FOLDER'];
         if (peerReadOnly && writeCommands.includes(msg.cmd)) {
-          // console.log(`🔒 Blocked ${msg.cmd} command - read-only mode`);
           peer.safeSend({ type: 'ERROR', message: 'READ-ONLY MODE: Editing is disabled' });
           return;
         }
@@ -1324,7 +1301,6 @@ class NoteRelay extends obsidian.Plugin {
   async checkConnectionHealth() {
     // Check if signaling connection is still alive
     if (!this.supabase || !this.settings.userEmail) {
-      // console.log('Note Relay: Connection health check - not connected');
       return;
     }
 
@@ -1332,22 +1308,18 @@ class NoteRelay extends obsidian.Plugin {
 
     // If more than 6 minutes since last heartbeat, reconnect
     if (timeSinceLastHeartbeat > 6 * 60 * 1000) {
-      // console.log('Note Relay: Connection stale, reconnecting...');
       await this.connectSignaling();
     } else {
-      // console.log('Note Relay: Connection healthy');
     }
   }
 
   async connectSignaling() {
     // CONSENT CHECK: Only connect if user has enabled remote access
     if (!this.settings.enableRemoteAccess) {
-      // console.log('Note Relay: Remote access disabled. Staying offline.');
       return;
     }
     // SECURITY CHECK: Do not connect to Supabase if no email is present.
     if (!this.settings.userEmail) {
-      // console.log('Note Relay: No user email found. Staying offline (Local Mode only).');
       return; // Exit immediately
     }
 
@@ -1380,7 +1352,6 @@ class NoteRelay extends obsidian.Plugin {
         SUPABASE_KEY = initData.supabase.anonKey;
         this.iceServers = initData.iceServers; // Store for WebRTC
 
-        // console.log('✅ Connection credentials loaded dynamically');
       } catch (err) {
         console.error('Failed to fetch connection credentials:', err);
         new obsidian.Notice('Note Relay: Connection initialization failed');
@@ -1407,16 +1378,13 @@ class NoteRelay extends obsidian.Plugin {
       this.statusBar?.setText(`Note Relay: Active`);
     }
 
-    // console.log('🎧 Host listening for offers with filter: target=eq.' + ID);
 
     this.channel = this.supabase.channel('host-channel')
       .on(
         'postgres_changes',
         { event: 'INSERT', schema: 'public', table: 'signaling', filter: `target=eq.${ID}` },
         (payload) => {
-          // console.log('📨 Received signaling message:', payload.new);
           if (payload.new.type === 'offer') {
-            // console.log('✅ Offer received from:', payload.new.source);
             new obsidian.Notice(`Incoming Connection...`);
             this.answerCall(payload.new.source, payload.new.payload);
           }
@@ -1451,13 +1419,11 @@ class NoteRelay extends obsidian.Plugin {
     ];
 
     // DEBUG: Log what we're extracting
-    // console.log('🎨 THEME EXTRACTION DEBUG:');
 
     // Build :root block with essential variables at the top
     let rootVars = ':root {\n';
     essentialVars.forEach(varName => {
       const value = bodyStyles.getPropertyValue(varName).trim();
-      // console.log(`  ${varName}: ${value || 'NOT FOUND'}`);
       if (value) {
         // Add !important to ensure these override fallbacks
         rootVars += `  ${varName}: ${value} !important;\n`;
@@ -1466,8 +1432,6 @@ class NoteRelay extends obsidian.Plugin {
     rootVars += '}\n';
     allCSS.push(rootVars);
 
-    // console.log('📋 Root vars block:', rootVars);
-    // console.log('📊 Total stylesheet count:', document.styleSheets.length);
 
     // Then capture stylesheet rules (filtered)
     Array.from(document.styleSheets).forEach(sheet => {
@@ -1571,7 +1535,6 @@ class NoteRelay extends obsidian.Plugin {
       }
     });
 
-    // console.log('🎨 Extracted', pluginCSS.length - 1, 'CSS rules for', baseClassName);
 
     return pluginCSS.join('\n');
   }
