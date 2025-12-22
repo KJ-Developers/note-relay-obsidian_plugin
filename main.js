@@ -19288,6 +19288,12 @@ var SimplePeer = require_simple_peer();
 var { readFileSync } = require("fs");
 var { join } = require("path");
 var os = require("os");
+var originalConsoleLog = console.log;
+console.log = (...args) => {
+  var _a, _b;
+  if ((_b = (_a = args[0]) == null ? void 0 : _a.includes) == null ? void 0 : _b.call(_a, "Multiple GoTrueClient instances")) return;
+  originalConsoleLog.apply(console, args);
+};
 var SUPABASE_URL = null;
 var SUPABASE_KEY = null;
 var API_BASE_URL = "https://noterelay.io";

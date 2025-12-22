@@ -9,6 +9,13 @@ const { readFileSync } = require('fs');
 const { join } = require('path');
 const os = require('os');
 
+// Suppress Supabase "Multiple GoTrueClient instances" warning (benign, expected in plugin)
+const originalConsoleLog = console.log;
+console.log = (...args) => {
+  if (args[0]?.includes?.('Multiple GoTrueClient instances')) return;
+  originalConsoleLog.apply(console, args);
+};
+
 
 // Supabase credentials loaded dynamically from API (no hardcoded keys)
 let SUPABASE_URL = null;
