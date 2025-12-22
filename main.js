@@ -20554,10 +20554,39 @@ var NoteRelaySettingTab = class extends obsidian.PluginSettingTab {
         <strong style="color: #4caf50;">\u2705 Account Verified</strong><br>
         <span style="color: var(--text-muted);">${this.plugin.settings.userEmail}</span>
       `;
-      new obsidian.Setting(containerEl).setName("Change Account").setDesc("Verify a different noterelay.io account").addButton((btn) => btn.setButtonText("Re-verify").onClick(() => {
+      new obsidian.Setting(containerEl).setName("Change Account").setDesc("Verify a different noterelay.io account").addButton((btn) => btn.setButtonText("Re-verify").onClick(async () => {
+        if (this.plugin.isConnected) {
+          const confirm = await new Promise((resolve) => {
+            const modal = new obsidian.Modal(this.app);
+            modal.contentEl.createEl("h2", { text: "\u26A0\uFE0F Relay Will Disconnect" });
+            modal.contentEl.createEl("p", { text: "Re-verifying will disconnect the current relay connection. You will need to reconnect after verification." });
+            const btnContainer = modal.contentEl.createDiv({ cls: "modal-button-container" });
+            btnContainer.style.cssText = "display: flex; gap: 10px; justify-content: flex-end; margin-top: 20px;";
+            const cancelBtn = btnContainer.createEl("button", { text: "Cancel" });
+            cancelBtn.onclick = () => {
+              modal.close();
+              resolve(false);
+            };
+            const confirmBtn = btnContainer.createEl("button", { text: "Continue", cls: "mod-warning" });
+            confirmBtn.onclick = () => {
+              modal.close();
+              resolve(true);
+            };
+            modal.open();
+          });
+          if (!confirm) return;
+          this.plugin.disconnectSignaling();
+        }
         const url = `https://noterelay.io/plugin-auth?vaultId=${encodeURIComponent(this.plugin.settings.vaultId)}`;
         window.open(url);
         new obsidian.Notice("\u{1F510} Complete verification in your browser, then return here.");
+      })).addButton((btn) => btn.setButtonText("Logout").setWarning().onClick(async () => {
+        this.plugin.disconnectSignaling();
+        this.plugin.settings.userEmail = "";
+        this.plugin.settings.emailValidated = false;
+        await this.plugin.saveSettings();
+        new obsidian.Notice("\u{1F513} Account disconnected. You will need to verify again to use the relay.");
+        this.display();
       }));
     } else {
       const notVerifiedDiv = containerEl.createDiv();
