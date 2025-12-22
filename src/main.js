@@ -1359,7 +1359,10 @@ class NoteRelay extends obsidian.Plugin {
       }
     }
 
-    this.supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
+    // Reuse existing supabase client or create new one (avoids Multiple GoTrueClient warning)
+    if (!this.supabase) {
+      this.supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
+    }
 
     // Check if we have user email for remote access
     let signalId = null;

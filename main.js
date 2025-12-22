@@ -20323,7 +20323,9 @@ var NoteRelay = class extends obsidian.Plugin {
         return;
       }
     }
-    this.supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
+    if (!this.supabase) {
+      this.supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
+    }
     let signalId = null;
     if (this.settings.enableRemoteAccess && this.settings.userEmail && this.settings.emailValidated) {
       signalId = await this.registerVaultAndGetSignalId();
