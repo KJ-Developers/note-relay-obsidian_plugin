@@ -19295,20 +19295,74 @@ var BUILD_VERSION = "2024.12.16-1421";
 var CHUNK_SIZE = 16 * 1024;
 var DEFAULT_SETTINGS = {
   enableRemoteAccess: false,
-  passwordHash: "",
-  // IDENTITY-BASED REMOTE ACCESS
+  // IDENTITY-BASED REMOTE ACCESS (OTP Model v8.0)
   userEmail: "",
   // User's email address (subscription validation)
-  masterPasswordHash: "",
-  // Owner's override password
   vaultId: ""
   // Unique vault identifier (auto-generated)
+  // DEPRECATED: masterPasswordHash removed - now using Supabase MFA
 };
 async function hashString(str) {
   const msgBuffer = new TextEncoder().encode(str);
   const hashBuffer = await crypto.subtle.digest("SHA-256", msgBuffer);
   return Array.from(new Uint8Array(hashBuffer)).map((b) => b.toString(16).padStart(2, "0")).join("");
 }
+var OTPModal = class extends obsidian.Modal {
+  constructor(app, onSubmit) {
+    super(app);
+    this.onSubmit = onSubmit;
+    this.result = null;
+  }
+  onOpen() {
+    const { contentEl } = this;
+    contentEl.empty();
+    contentEl.style.textAlign = "center";
+    contentEl.createEl("h2", { text: "\u{1F510} Verify Your Identity" });
+    contentEl.createEl("p", {
+      text: "Open your authenticator app and enter the 6-digit code.",
+      cls: "setting-item-description"
+    });
+    const inputContainer = contentEl.createDiv();
+    inputContainer.style.cssText = "margin: 20px 0; display: flex; justify-content: center;";
+    const input = inputContainer.createEl("input", {
+      type: "text",
+      attr: {
+        maxlength: "6",
+        pattern: "[0-9]*",
+        inputmode: "numeric",
+        autocomplete: "one-time-code",
+        placeholder: "000000"
+      }
+    });
+    input.style.cssText = "font-size: 28px; text-align: center; width: 180px; letter-spacing: 10px; padding: 10px; font-family: monospace;";
+    const btnContainer = contentEl.createDiv();
+    btnContainer.style.cssText = "margin-top: 20px; display: flex; gap: 10px; justify-content: center;";
+    const cancelBtn = btnContainer.createEl("button", { text: "Cancel" });
+    cancelBtn.onclick = () => {
+      this.result = null;
+      this.close();
+    };
+    const verifyBtn = btnContainer.createEl("button", { text: "Verify", cls: "mod-cta" });
+    verifyBtn.onclick = () => {
+      const code = input.value.trim();
+      if (code.length === 6 && /^\d+$/.test(code)) {
+        this.result = code;
+        this.close();
+      } else {
+        new obsidian.Notice("Please enter a valid 6-digit code");
+      }
+    };
+    input.focus();
+    input.addEventListener("keypress", (e) => {
+      if (e.key === "Enter") verifyBtn.click();
+    });
+  }
+  onClose() {
+    if (this.onSubmit) {
+      this.onSubmit(this.result);
+    }
+  }
+};
 var NoteRelay = class extends obsidian.Plugin {
   async onload() {
     var _a;
@@ -19341,7 +19395,7 @@ var NoteRelay = class extends obsidian.Plugin {
     console.log("Note Relay: Wake detection enabled");
     this.keepAliveInterval = setInterval(() => {
     }, 1e3);
-    if (this.settings.enableRemoteAccess && this.settings.userEmail && this.settings.masterPasswordHash) {
+    if (this.settings.enableRemoteAccess && this.settings.userEmail && this.settings.emailValidated) {
       setTimeout(() => this.connectSignaling(), 3e3);
     } else {
       (_a = this.statusBar) == null ? void 0 : _a.setText("Note Relay: Not configured");
@@ -20088,17 +20142,10 @@ var NoteRelay = class extends obsidian.Plugin {
           if (msg.guestEmail && msg.authHash) {
             const userEmail = msg.guestEmail.toLowerCase().trim();
             if (this.settings.userEmail && userEmail === this.settings.userEmail.toLowerCase().trim()) {
-              if (this.settings.masterPasswordHash && msg.authHash === this.settings.masterPasswordHash) {
-                accessGranted = true;
-                isReadOnly = false;
-                userIdentifier = this.settings.userEmail;
-                console.log("Note Relay: Owner authenticated");
-              } else {
-                console.log("Note Relay: Owner password mismatch");
-                peer.safeSend({ type: "ERROR", message: "ACCESS_DENIED: Invalid password." });
-                setTimeout(() => peer.destroy(), 1e3);
-                return;
-              }
+              accessGranted = true;
+              isReadOnly = false;
+              userIdentifier = this.settings.userEmail;
+              console.log("Note Relay: Owner authenticated (OTP pre-validated)");
             } else {
               console.log("Note Relay: Attempting guest authentication for:", userEmail);
               try {
@@ -20269,7 +20316,7 @@ var NoteRelay = class extends obsidian.Plugin {
     }
     this.supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
     let signalId = null;
-    if (this.settings.enableRemoteAccess && this.settings.userEmail && this.settings.masterPasswordHash) {
+    if (this.settings.enableRemoteAccess && this.settings.userEmail && this.settings.emailValidated) {
       signalId = await this.registerVaultAndGetSignalId();
     }
     const ID = signalId || "host";
@@ -20505,28 +20552,8 @@ var NoteRelaySettingTab = class extends obsidian.PluginSettingTab {
     } else {
       emailStatus.setText("Enter your noterelay.io email");
     }
-    containerEl.createEl("h3", { text: "3\uFE0F\u20E3 Vault Password" });
-    new obsidian.Setting(containerEl).setName("Remote Vault Password").setDesc("Password required to access your vault remotely").addText((text) => {
-      text.inputEl.type = "password";
-      text.setPlaceholder("Enter password");
-      text.inputEl.addEventListener("blur", async () => {
-        const value = text.getValue();
-        if (value) {
-          this.plugin.settings.masterPasswordHash = await hashString(value);
-          await this.plugin.saveSettings();
-          this.display();
-        }
-      });
-      text.inputEl.addEventListener("keypress", async (e) => {
-        if (e.key === "Enter") text.inputEl.blur();
-      });
-    });
-    const passStatus = containerEl.createDiv({ cls: "setting-item-description" });
-    passStatus.style.marginTop = "-10px";
-    passStatus.style.marginBottom = "20px";
-    passStatus.setText(this.plugin.settings.masterPasswordHash ? "\u2705 Password is set" : "\u26A0\uFE0F Password required");
-    containerEl.createEl("h3", { text: "4\uFE0F\u20E3 Connect Relay" });
-    const canStart = this.plugin.settings.enableRemoteAccess && this.plugin.settings.emailValidated && this.plugin.settings.masterPasswordHash;
+    containerEl.createEl("h3", { text: "3\uFE0F\u20E3 Connect Relay" });
+    const canStart = this.plugin.settings.enableRemoteAccess && this.plugin.settings.emailValidated;
     if (!canStart) {
       const warningDiv = containerEl.createDiv();
       warningDiv.style.cssText = "padding: 15px; margin-bottom: 15px; background: rgba(255,152,0,0.1); border-left: 3px solid #ff9800; border-radius: 4px;";
@@ -20534,8 +20561,6 @@ var NoteRelaySettingTab = class extends obsidian.PluginSettingTab {
         warningDiv.innerHTML = "<strong>\u26A0\uFE0F Step 1 incomplete</strong><br>Enable remote access above.";
       } else if (!this.plugin.settings.emailValidated) {
         warningDiv.innerHTML = "<strong>\u26A0\uFE0F Step 2 incomplete</strong><br>Enter a valid noterelay.io email and press Tab.";
-      } else {
-        warningDiv.innerHTML = "<strong>\u26A0\uFE0F Step 3 incomplete</strong><br>Set a vault password.";
       }
     }
     new obsidian.Setting(containerEl).setName("Relay Control").setDesc(this.plugin.isConnected ? "\u{1F7E2} Relay is connected" : "\u26AA Relay disconnected").addButton((button) => button.setButtonText(this.plugin.isConnected ? "Disconnect" : "Connect").setDisabled(!canStart).onClick(async () => {

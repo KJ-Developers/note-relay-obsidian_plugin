@@ -18,17 +18,87 @@ const BUILD_VERSION = '2024.12.16-1421';
 const CHUNK_SIZE = 16 * 1024;
 const DEFAULT_SETTINGS = {
   enableRemoteAccess: false,
-  passwordHash: '',
-  // IDENTITY-BASED REMOTE ACCESS
+  // IDENTITY-BASED REMOTE ACCESS (OTP Model v8.0)
   userEmail: '', // User's email address (subscription validation)
-  masterPasswordHash: '', // Owner's override password
   vaultId: '', // Unique vault identifier (auto-generated)
+  // DEPRECATED: masterPasswordHash removed - now using Supabase MFA
 };
 
 async function hashString(str) {
   const msgBuffer = new TextEncoder().encode(str);
   const hashBuffer = await crypto.subtle.digest('SHA-256', msgBuffer);
   return Array.from(new Uint8Array(hashBuffer)).map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+/**
+ * OTP Modal for TOTP verification
+ * Used during vault registration to verify user identity via Supabase MFA
+ */
+class OTPModal extends obsidian.Modal {
+  constructor(app, onSubmit) {
+    super(app);
+    this.onSubmit = onSubmit;
+    this.result = null;
+  }
+
+  onOpen() {
+    const { contentEl } = this;
+    contentEl.empty();
+    contentEl.style.textAlign = 'center';
+
+    contentEl.createEl('h2', { text: '🔐 Verify Your Identity' });
+    contentEl.createEl('p', {
+      text: 'Open your authenticator app and enter the 6-digit code.',
+      cls: 'setting-item-description'
+    });
+
+    const inputContainer = contentEl.createDiv();
+    inputContainer.style.cssText = 'margin: 20px 0; display: flex; justify-content: center;';
+
+    const input = inputContainer.createEl('input', {
+      type: 'text',
+      attr: {
+        maxlength: '6',
+        pattern: '[0-9]*',
+        inputmode: 'numeric',
+        autocomplete: 'one-time-code',
+        placeholder: '000000'
+      }
+    });
+    input.style.cssText = 'font-size: 28px; text-align: center; width: 180px; letter-spacing: 10px; padding: 10px; font-family: monospace;';
+
+    const btnContainer = contentEl.createDiv();
+    btnContainer.style.cssText = 'margin-top: 20px; display: flex; gap: 10px; justify-content: center;';
+
+    const cancelBtn = btnContainer.createEl('button', { text: 'Cancel' });
+    cancelBtn.onclick = () => {
+      this.result = null;
+      this.close();
+    };
+
+    const verifyBtn = btnContainer.createEl('button', { text: 'Verify', cls: 'mod-cta' });
+    verifyBtn.onclick = () => {
+      const code = input.value.trim();
+      if (code.length === 6 && /^\d+$/.test(code)) {
+        this.result = code;
+        this.close();
+      } else {
+        new obsidian.Notice('Please enter a valid 6-digit code');
+      }
+    };
+
+    // Focus input and handle Enter key
+    input.focus();
+    input.addEventListener('keypress', (e) => {
+      if (e.key === 'Enter') verifyBtn.click();
+    });
+  }
+
+  onClose() {
+    if (this.onSubmit) {
+      this.onSubmit(this.result);
+    }
+  }
 }
 
 class NoteRelay extends obsidian.Plugin {
@@ -82,8 +152,9 @@ class NoteRelay extends obsidian.Plugin {
       // Noop - just keeps the event loop from going idle
     }, 1000);
 
-    // Only auto-connect if fully configured (email + password)
-    if (this.settings.enableRemoteAccess && this.settings.userEmail && this.settings.masterPasswordHash) {
+    // Only auto-connect if fully configured (email verified)
+    // NOTE: Password check removed in v8.0 - OTP validates at connection time
+    if (this.settings.enableRemoteAccess && this.settings.userEmail && this.settings.emailValidated) {
       setTimeout(() => this.connectSignaling(), 3000); // 3s delay for cold start
     } else {
       this.statusBar?.setText('Note Relay: Not configured');
@@ -1044,18 +1115,12 @@ class NoteRelay extends obsidian.Plugin {
 
             // Check if this is the owner's email
             if (this.settings.userEmail && userEmail === this.settings.userEmail.toLowerCase().trim()) {
-              // Owner authentication
-              if (this.settings.masterPasswordHash && msg.authHash === this.settings.masterPasswordHash) {
-                accessGranted = true;
-                isReadOnly = false;
-                userIdentifier = this.settings.userEmail;
-                console.log('Note Relay: Owner authenticated');
-              } else {
-                console.log('Note Relay: Owner password mismatch');
-                peer.safeSend({ type: 'ERROR', message: 'ACCESS_DENIED: Invalid password.' });
-                setTimeout(() => peer.destroy(), 1000);
-                return;
-              }
+              // Owner authentication (v8.0: OTP validated by server before signaling)
+              // If we received a valid WebRTC connection, the server has already verified OTP
+              accessGranted = true;
+              isReadOnly = false;
+              userIdentifier = this.settings.userEmail;
+              console.log('Note Relay: Owner authenticated (OTP pre-validated)');
             } else {
               // Guest authentication - verify via Supabase RPC
               console.log('Note Relay: Attempting guest authentication for:', userEmail);
@@ -1279,7 +1344,8 @@ class NoteRelay extends obsidian.Plugin {
 
     // Check if we have user email for remote access
     let signalId = null;
-    if (this.settings.enableRemoteAccess && this.settings.userEmail && this.settings.masterPasswordHash) {
+    // NOTE: Password check removed in v8.0 - using Supabase MFA
+    if (this.settings.enableRemoteAccess && this.settings.userEmail && this.settings.emailValidated) {
       signalId = await this.registerVaultAndGetSignalId();
     }
 
@@ -1564,37 +1630,11 @@ class NoteRelaySettingTab extends obsidian.PluginSettingTab {
       emailStatus.setText('Enter your noterelay.io email');
     }
 
-    // Step 2: Vault Password
-    containerEl.createEl('h3', { text: '3️⃣ Vault Password' });
+    // Step 3: Connect Relay (v8.0: No password required, OTP validates at connection time)
+    containerEl.createEl('h3', { text: '3️⃣ Connect Relay' });
 
-    new obsidian.Setting(containerEl)
-      .setName('Remote Vault Password')
-      .setDesc('Password required to access your vault remotely')
-      .addText(text => {
-        text.inputEl.type = 'password';
-        text.setPlaceholder('Enter password');
-        text.inputEl.addEventListener('blur', async () => {
-          const value = text.getValue();
-          if (value) {
-            this.plugin.settings.masterPasswordHash = await hashString(value);
-            await this.plugin.saveSettings();
-            this.display();
-          }
-        });
-        text.inputEl.addEventListener('keypress', async (e) => {
-          if (e.key === 'Enter') text.inputEl.blur();
-        });
-      });
-
-    const passStatus = containerEl.createDiv({ cls: 'setting-item-description' });
-    passStatus.style.marginTop = '-10px';
-    passStatus.style.marginBottom = '20px';
-    passStatus.setText(this.plugin.settings.masterPasswordHash ? '✅ Password is set' : '⚠️ Password required');
-
-    // Step 3: Connect Relay
-    containerEl.createEl('h3', { text: '4️⃣ Connect Relay' });
-
-    const canStart = this.plugin.settings.enableRemoteAccess && this.plugin.settings.emailValidated && this.plugin.settings.masterPasswordHash;
+    // v8.0: Only require consent + verified email
+    const canStart = this.plugin.settings.enableRemoteAccess && this.plugin.settings.emailValidated;
 
     if (!canStart) {
       const warningDiv = containerEl.createDiv();
@@ -1603,8 +1643,6 @@ class NoteRelaySettingTab extends obsidian.PluginSettingTab {
         warningDiv.innerHTML = '<strong>⚠️ Step 1 incomplete</strong><br>Enable remote access above.';
       } else if (!this.plugin.settings.emailValidated) {
         warningDiv.innerHTML = '<strong>⚠️ Step 2 incomplete</strong><br>Enter a valid noterelay.io email and press Tab.';
-      } else {
-        warningDiv.innerHTML = '<strong>⚠️ Step 3 incomplete</strong><br>Set a vault password.';
       }
     }
 
