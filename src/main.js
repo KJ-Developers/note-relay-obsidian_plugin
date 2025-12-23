@@ -181,16 +181,14 @@ class NoteRelay extends obsidian.Plugin {
       }
     });
 
-    // Keep event loop active AND force pending callbacks to process
-    // The async work (even Date.now()) prevents Electron from fully throttling the WebSocket
-    // This is critical for receiving WebRTC signaling while Obsidian is in background
-    this.keepAliveInterval = setInterval(async () => {
-      // Small async operation keeps the event loop responsive to WebSocket callbacks
-      await Promise.resolve();
-      // Touch the Supabase connection if it exists to keep it responsive
-      if (this.supabase && this.channel) {
-        // Reading state doesn't send network traffic but keeps the objects active
-        const state = this.channel.state;
+    // CRITICAL: Keep process active to prevent macOS App Nap throttling
+    // console.log performs I/O which signals to the OS that the app is active
+    // Without this, WebRTC callbacks are delayed until the app regains focus
+    this.keepAliveInterval = setInterval(() => {
+      // This console.log is NOT debug - it's functional!
+      // It performs I/O that prevents macOS from throttling background processing
+      if (this.isConnected) {
+        console.log('♻️'); // Minimal output but still performs I/O
       }
     }, 1000);
 

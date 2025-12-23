@@ -19419,10 +19419,9 @@ var NoteRelay = class extends obsidian.Plugin {
         new obsidian.Notice("\u274C Invalid callback - missing parameters");
       }
     });
-    this.keepAliveInterval = setInterval(async () => {
-      await Promise.resolve();
-      if (this.supabase && this.channel) {
-        const state = this.channel.state;
+    this.keepAliveInterval = setInterval(() => {
+      if (this.isConnected) {
+        console.log("\u267B\uFE0F");
       }
     }, 1e3);
     if (this.settings.enableRemoteAccess && this.settings.userEmail && this.settings.emailValidated) {
