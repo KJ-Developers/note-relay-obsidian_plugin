@@ -33,6 +33,7 @@ const DEFAULT_SETTINGS = {
   enableRemoteAccess: false,
   // IDENTITY-BASED REMOTE ACCESS (OTP Model v8.0)
   userEmail: '', // User's email address (subscription validation)
+  emailValidated: false, // Whether email has been verified via OAuth
   vaultId: '', // Unique vault identifier (auto-generated)
   // DEPRECATED: masterPasswordHash removed - now using Supabase MFA
 };
@@ -206,6 +207,15 @@ class NoteRelay extends obsidian.Plugin {
 
   async loadSettings() {
     this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
+
+    // MIGRATION: Auto-set emailValidated for existing configs (v8.0 upgrade path)
+    // If user has userEmail but emailValidated is undefined (old config), treat as validated
+    // This prevents breaking existing working setups when upgrading from password-based auth
+    if (this.settings.userEmail && this.settings.emailValidated === undefined) {
+      console.log('Note Relay: Migrating settings - auto-validating existing email config');
+      this.settings.emailValidated = true;
+      await this.saveData(this.settings);
+    }
   }
 
   async saveSettings() {
