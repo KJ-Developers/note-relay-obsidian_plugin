@@ -148,12 +148,8 @@ class NoteRelay extends obsidian.Plugin {
 
     // Register wake detection
     this.wakeHandler = async () => {
-      const isVisible = !document.hidden;
-      console.log(`🔔 VISIBILITY CHANGE: hidden=${document.hidden}, isVisible=${isVisible}, hasEmail=${!!this.settings.userEmail}`);
-      if (isVisible && this.settings.userEmail) {
-        console.log('🔔 WAKE: Calling checkConnectionHealth...');
+      if (!document.hidden && this.settings.userEmail) {
         await this.checkConnectionHealth();
-        console.log('🔔 WAKE: checkConnectionHealth complete');
       }
     };
 
@@ -185,14 +181,16 @@ class NoteRelay extends obsidian.Plugin {
       }
     });
 
-    // CRITICAL: Keep process active to prevent macOS App Nap throttling
-    // console.log performs I/O which signals to the OS that the app is active
-    // Without this, WebRTC callbacks are delayed until the app regains focus
-    this.keepAliveInterval = setInterval(() => {
-      // This console.log is NOT debug - it's functional!
-      // It performs I/O that prevents macOS from throttling background processing
-      if (this.isConnected) {
-        console.log('♻️'); // Minimal output but still performs I/O
+    // Keep event loop active AND force pending callbacks to process
+    // The async work (even Date.now()) prevents Electron from fully throttling the WebSocket
+    // This is critical for receiving WebRTC signaling while Obsidian is in background
+    this.keepAliveInterval = setInterval(async () => {
+      // Small async operation keeps the event loop responsive to WebSocket callbacks
+      await Promise.resolve();
+      // Touch the Supabase connection if it exists to keep it responsive
+      if (this.supabase && this.channel) {
+        // Reading state doesn't send network traffic but keeps the objects active
+        const state = this.channel.state;
       }
     }, 1000);
 
@@ -474,7 +472,6 @@ class NoteRelay extends obsidian.Plugin {
   }
 
   async _handleGetTree(sendCallback) {
-    console.log(`🌲 _handleGetTree START: time=${new Date().toISOString()}`);
     const files = this.app.vault.getMarkdownFiles().map((f) => {
       const cache = this.app.metadataCache.getFileCache(f);
       let tags = [], links = [];
@@ -489,7 +486,6 @@ class NoteRelay extends obsidian.Plugin {
       }
       return { path: f.path, tags: [...new Set(tags)], links: [...new Set(links)] };
     });
-    console.log(`🌲 _handleGetTree: ${files.length} files collected`);
 
     // Get all folders including empty ones
     const allFolders = [];
@@ -502,12 +498,9 @@ class NoteRelay extends obsidian.Plugin {
       });
     };
     getAllFolders(this.app.vault.getRoot());
-    console.log(`🌲 _handleGetTree: ${allFolders.length} folders collected`);
 
     const treeCss = this.extractThemeCSS();
-    console.log(`🌲 _handleGetTree: CSS extracted, calling sendCallback...`);
     sendCallback('TREE', { files, folders: allFolders, css: treeCss });
-    console.log(`🌲 _handleGetTree END: time=${new Date().toISOString()}`);
   }
 
 
@@ -1043,7 +1036,6 @@ class NoteRelay extends obsidian.Plugin {
   }
 
   async processCommand(msg, sendCallback, isReadOnly = false) {
-    console.log(`📥 PROCESS_COMMAND: cmd=${msg.cmd}, time=${new Date().toISOString()}`);
     try {
       if (msg.cmd === 'PING' || msg.cmd === 'HANDSHAKE') {
         await this._handlePing(msg, sendCallback);
@@ -1051,9 +1043,7 @@ class NoteRelay extends obsidian.Plugin {
       }
 
       if (msg.cmd === 'GET_TREE') {
-        console.log(`📥 PROCESS_COMMAND: Calling _handleGetTree...`);
         await this._handleGetTree(sendCallback);
-        console.log(`📥 PROCESS_COMMAND: _handleGetTree complete`);
         return;
       }
 
@@ -1109,13 +1099,11 @@ class NoteRelay extends obsidian.Plugin {
   }
 
   answerCall(remoteId, offerSignal) {
-    console.log(`🔌 ANSWER_CALL START: remoteId=${remoteId}, time=${new Date().toISOString()}`);
     // Configure ICE servers (STUN + TURN if available)
     const iceServers = this.iceServers || [
       { urls: 'stun:stun.l.google.com:19302' },
       { urls: 'stun:stun1.l.google.com:19302' }
     ];
-    console.log(`🔌 ANSWER_CALL: Creating SimplePeer...`);
 
     const peer = new SimplePeer({
       initiator: false,
@@ -1123,7 +1111,6 @@ class NoteRelay extends obsidian.Plugin {
       objectMode: false,
       config: { iceServers }
     });
-    console.log(`🔌 ANSWER_CALL: SimplePeer created, setting up handlers...`);
     let isAuthenticated = false;
     let peerReadOnly = false;
 
@@ -1145,27 +1132,20 @@ class NoteRelay extends obsidian.Plugin {
       let offset = 0;
 
       if (totalBytes > 100000) {
-        console.log(`📤 sendChunked: Sending ${totalBytes} bytes in chunks...`);
       }
 
-      // CRITICAL: Don't use setTimeout between chunks!
-      // setTimeout is throttled to 1000ms+ in background, causing massive delays
-      // The WebRTC data channel handles its own flow control
       while (offset < totalBytes) {
         const chunk = fullString.slice(offset, offset + CHUNK_SIZE);
         offset += CHUNK_SIZE;
         peer.safeSend({ type: 'PART', cat: type, chunk, end: offset >= totalBytes, ...meta });
-        // Use Promise.resolve() instead of setTimeout for yielding
-        // This keeps the event loop active but doesn't get throttled
+        // CRITICAL: Use Promise.resolve instead of setTimeout
+        // setTimeout is throttled to ~1000ms in background, causing massive delays
+        // Promise.resolve yields the event loop without being throttled
         await Promise.resolve();
-      }
-      if (totalBytes > 100000) {
-        console.log(`📤 sendChunked: Complete`);
       }
     };
 
     peer.on('signal', async (data) => {
-      console.log(`🔌 PEER.ON('signal'): Sending answer via Supabase, time=${new Date().toISOString()}`);
       await this.supabase.from('signaling').insert({
         source: 'host',
         target: remoteId,
@@ -1307,9 +1287,7 @@ class NoteRelay extends obsidian.Plugin {
       }
     });
 
-    console.log(`🔌 PEER.SIGNAL(offer): Triggering ICE, time=${new Date().toISOString()}`);
     peer.signal(offerSignal);
-    console.log(`🔌 PEER.SIGNAL(offer): Called, waiting for peer events...`);
   }
 
   async waitForRender(element) {
@@ -1354,22 +1332,17 @@ class NoteRelay extends obsidian.Plugin {
   }
 
   async checkConnectionHealth() {
-    console.log('🏥 checkConnectionHealth called');
     // Check if signaling connection is still alive
     if (!this.supabase || !this.settings.userEmail) {
-      console.log('🏥 checkConnectionHealth: no supabase or email, returning');
       return;
     }
 
     const timeSinceLastHeartbeat = Date.now() - (this.lastHeartbeatTime || 0);
-    console.log(`🏥 checkConnectionHealth: timeSinceLastHeartbeat=${Math.round(timeSinceLastHeartbeat / 1000)}s`);
 
     // If more than 6 minutes since last heartbeat, reconnect
     if (timeSinceLastHeartbeat > 6 * 60 * 1000) {
-      console.log('🏥 checkConnectionHealth: >6min gap, reconnecting...');
       await this.connectSignaling();
     } else {
-      console.log('🏥 checkConnectionHealth: gap OK, no action needed');
     }
   }
 
@@ -1447,10 +1420,8 @@ class NoteRelay extends obsidian.Plugin {
         'postgres_changes',
         { event: 'INSERT', schema: 'public', table: 'signaling', filter: `target=eq.${ID}` },
         (payload) => {
-          console.log(`📨 SIGNALING CALLBACK: type=${payload.new.type}, source=${payload.new.source}, time=${new Date().toISOString()}`);
           if (payload.new.type === 'offer') {
             new obsidian.Notice(`Incoming Connection...`);
-            console.log('📨 OFFER RECEIVED - calling answerCall');
             this.answerCall(payload.new.source, payload.new.payload);
           }
         }

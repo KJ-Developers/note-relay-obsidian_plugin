@@ -19396,12 +19396,8 @@ var NoteRelay = class extends obsidian.Plugin {
     this.connectSignaling();
     this.lastHeartbeatTime = Date.now();
     this.wakeHandler = async () => {
-      const isVisible = !document.hidden;
-      console.log(`\u{1F514} VISIBILITY CHANGE: hidden=${document.hidden}, isVisible=${isVisible}, hasEmail=${!!this.settings.userEmail}`);
-      if (isVisible && this.settings.userEmail) {
-        console.log("\u{1F514} WAKE: Calling checkConnectionHealth...");
+      if (!document.hidden && this.settings.userEmail) {
         await this.checkConnectionHealth();
-        console.log("\u{1F514} WAKE: checkConnectionHealth complete");
       }
     };
     this.registerDomEvent(document, "visibilitychange", this.wakeHandler);
@@ -19423,9 +19419,10 @@ var NoteRelay = class extends obsidian.Plugin {
         new obsidian.Notice("\u274C Invalid callback - missing parameters");
       }
     });
-    this.keepAliveInterval = setInterval(() => {
-      if (this.isConnected) {
-        console.log("\u267B\uFE0F");
+    this.keepAliveInterval = setInterval(async () => {
+      await Promise.resolve();
+      if (this.supabase && this.channel) {
+        const state = this.channel.state;
       }
     }, 1e3);
     if (this.settings.enableRemoteAccess && this.settings.userEmail && this.settings.emailValidated) {
@@ -19644,7 +19641,6 @@ var NoteRelay = class extends obsidian.Plugin {
     });
   }
   async _handleGetTree(sendCallback) {
-    console.log(`\u{1F332} _handleGetTree START: time=${(/* @__PURE__ */ new Date()).toISOString()}`);
     const files = this.app.vault.getMarkdownFiles().map((f) => {
       var _a;
       const cache = this.app.metadataCache.getFileCache(f);
@@ -19660,7 +19656,6 @@ var NoteRelay = class extends obsidian.Plugin {
       }
       return { path: f.path, tags: [...new Set(tags)], links: [...new Set(links)] };
     });
-    console.log(`\u{1F332} _handleGetTree: ${files.length} files collected`);
     const allFolders = [];
     const getAllFolders = (folder) => {
       folder.children.forEach((child) => {
@@ -19671,11 +19666,8 @@ var NoteRelay = class extends obsidian.Plugin {
       });
     };
     getAllFolders(this.app.vault.getRoot());
-    console.log(`\u{1F332} _handleGetTree: ${allFolders.length} folders collected`);
     const treeCss = this.extractThemeCSS();
-    console.log(`\u{1F332} _handleGetTree: CSS extracted, calling sendCallback...`);
     sendCallback("TREE", { files, folders: allFolders, css: treeCss });
-    console.log(`\u{1F332} _handleGetTree END: time=${(/* @__PURE__ */ new Date()).toISOString()}`);
   }
   // ============================================
   // COMMAND HANDLERS (Wave 2: Read)
@@ -20081,16 +20073,13 @@ var NoteRelay = class extends obsidian.Plugin {
     }
   }
   async processCommand(msg, sendCallback, isReadOnly = false) {
-    console.log(`\u{1F4E5} PROCESS_COMMAND: cmd=${msg.cmd}, time=${(/* @__PURE__ */ new Date()).toISOString()}`);
     try {
       if (msg.cmd === "PING" || msg.cmd === "HANDSHAKE") {
         await this._handlePing(msg, sendCallback);
         return;
       }
       if (msg.cmd === "GET_TREE") {
-        console.log(`\u{1F4E5} PROCESS_COMMAND: Calling _handleGetTree...`);
         await this._handleGetTree(sendCallback);
-        console.log(`\u{1F4E5} PROCESS_COMMAND: _handleGetTree complete`);
         return;
       }
       if (msg.cmd === "GET_RENDERED_FILE") {
@@ -20135,19 +20124,16 @@ var NoteRelay = class extends obsidian.Plugin {
     }
   }
   answerCall(remoteId, offerSignal) {
-    console.log(`\u{1F50C} ANSWER_CALL START: remoteId=${remoteId}, time=${(/* @__PURE__ */ new Date()).toISOString()}`);
     const iceServers = this.iceServers || [
       { urls: "stun:stun.l.google.com:19302" },
       { urls: "stun:stun1.l.google.com:19302" }
     ];
-    console.log(`\u{1F50C} ANSWER_CALL: Creating SimplePeer...`);
     const peer = new SimplePeer({
       initiator: false,
       trickle: false,
       objectMode: false,
       config: { iceServers }
     });
-    console.log(`\u{1F50C} ANSWER_CALL: SimplePeer created, setting up handlers...`);
     let isAuthenticated = false;
     let peerReadOnly = false;
     peer.safeSend = (data) => {
@@ -20165,7 +20151,6 @@ var NoteRelay = class extends obsidian.Plugin {
       const totalBytes = fullString.length;
       let offset = 0;
       if (totalBytes > 1e5) {
-        console.log(`\u{1F4E4} sendChunked: Sending ${totalBytes} bytes in chunks...`);
       }
       while (offset < totalBytes) {
         const chunk = fullString.slice(offset, offset + CHUNK_SIZE);
@@ -20173,12 +20158,8 @@ var NoteRelay = class extends obsidian.Plugin {
         peer.safeSend({ type: "PART", cat: type, chunk, end: offset >= totalBytes, ...meta });
         await Promise.resolve();
       }
-      if (totalBytes > 1e5) {
-        console.log(`\u{1F4E4} sendChunked: Complete`);
-      }
     };
     peer.on("signal", async (data) => {
-      console.log(`\u{1F50C} PEER.ON('signal'): Sending answer via Supabase, time=${(/* @__PURE__ */ new Date()).toISOString()}`);
       await this.supabase.from("signaling").insert({
         source: "host",
         target: remoteId,
@@ -20284,9 +20265,7 @@ var NoteRelay = class extends obsidian.Plugin {
       if (false) {
       }
     });
-    console.log(`\u{1F50C} PEER.SIGNAL(offer): Triggering ICE, time=${(/* @__PURE__ */ new Date()).toISOString()}`);
     peer.signal(offerSignal);
-    console.log(`\u{1F50C} PEER.SIGNAL(offer): Called, waiting for peer events...`);
   }
   async waitForRender(element) {
     if (!element.innerHTML.trim()) {
@@ -20320,18 +20299,13 @@ var NoteRelay = class extends obsidian.Plugin {
     });
   }
   async checkConnectionHealth() {
-    console.log("\u{1F3E5} checkConnectionHealth called");
     if (!this.supabase || !this.settings.userEmail) {
-      console.log("\u{1F3E5} checkConnectionHealth: no supabase or email, returning");
       return;
     }
     const timeSinceLastHeartbeat = Date.now() - (this.lastHeartbeatTime || 0);
-    console.log(`\u{1F3E5} checkConnectionHealth: timeSinceLastHeartbeat=${Math.round(timeSinceLastHeartbeat / 1e3)}s`);
     if (timeSinceLastHeartbeat > 6 * 60 * 1e3) {
-      console.log("\u{1F3E5} checkConnectionHealth: >6min gap, reconnecting...");
       await this.connectSignaling();
     } else {
-      console.log("\u{1F3E5} checkConnectionHealth: gap OK, no action needed");
     }
   }
   async connectSignaling() {
@@ -20389,10 +20363,8 @@ var NoteRelay = class extends obsidian.Plugin {
       "postgres_changes",
       { event: "INSERT", schema: "public", table: "signaling", filter: `target=eq.${ID}` },
       (payload) => {
-        console.log(`\u{1F4E8} SIGNALING CALLBACK: type=${payload.new.type}, source=${payload.new.source}, time=${(/* @__PURE__ */ new Date()).toISOString()}`);
         if (payload.new.type === "offer") {
           new obsidian.Notice(`Incoming Connection...`);
-          console.log("\u{1F4E8} OFFER RECEIVED - calling answerCall");
           this.answerCall(payload.new.source, payload.new.payload);
         }
       }
