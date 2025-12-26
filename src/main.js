@@ -35,6 +35,7 @@ const DEFAULT_SETTINGS = {
   userEmail: '', // User's email address (subscription validation)
   emailValidated: false, // Whether email has been verified via OAuth
   vaultId: '', // Unique vault identifier (auto-generated)
+  themeHash: '', // SHA-256 hash of last uploaded theme CSS (bandwidth optimization)
   // DEPRECATED: masterPasswordHash removed - now using Supabase MFA
 };
 
@@ -462,12 +463,13 @@ class NoteRelay extends obsidian.Plugin {
   // ============================================
 
   async _handlePing(msg, sendCallback) {
-    // PING/HANDSHAKE
-    const themeCSS = this.extractThemeCSS();
+    // PING/HANDSHAKE - send hash always, full CSS only if changed
+    const { cssHash, css } = await this.getThemeCSSWithHash();
     sendCallback(msg.cmd === 'PING' ? 'PONG' : 'HANDSHAKE_ACK', {
       version: BUILD_VERSION,
       readOnly: false,
-      css: themeCSS
+      cssHash: cssHash,
+      css: css  // null if unchanged, full CSS if new/changed
     });
   }
 
@@ -499,8 +501,9 @@ class NoteRelay extends obsidian.Plugin {
     };
     getAllFolders(this.app.vault.getRoot());
 
-    const treeCss = this.extractThemeCSS();
-    sendCallback('TREE', { files, folders: allFolders, css: treeCss });
+    // Send hash always, full CSS only if changed (bandwidth optimization)
+    const { cssHash, css } = await this.getThemeCSSWithHash();
+    sendCallback('TREE', { files, folders: allFolders, cssHash: cssHash, css: css });
   }
 
 
@@ -1502,6 +1505,46 @@ class NoteRelay extends obsidian.Plugin {
     });
 
     return allCSS.join('\n');
+  }
+
+  /**
+   * Get theme CSS with hash for bandwidth optimization
+   * Returns cssHash always, but css only if hash changed from stored value
+   * After GUI confirms upload, it should call back to update stored hash
+   */
+  async getThemeCSSWithHash() {
+    const css = this.extractThemeCSS();
+
+    // Compute hash
+    const encoder = new TextEncoder();
+    const data = encoder.encode(css);
+    const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+    const cssHash = Array.from(new Uint8Array(hashBuffer))
+      .map(b => b.toString(16).padStart(2, '0'))
+      .join('');
+
+    // Only send full CSS if hash changed (or first time)
+    const storedHash = this.settings.themeHash || '';
+    const hashChanged = cssHash !== storedHash;
+
+    if (hashChanged) {
+      console.log(`Note Relay: Theme hash changed (${storedHash.substring(0, 8) || 'none'}... → ${cssHash.substring(0, 8)}...)`);
+    }
+
+    return {
+      cssHash: cssHash,
+      css: hashChanged ? css : null  // null = use cached theme
+    };
+  }
+
+  /**
+   * Update stored theme hash after GUI confirms upload
+   * Called via WebRTC command 'THEME_UPLOADED'
+   */
+  updateStoredThemeHash(hash) {
+    this.settings.themeHash = hash;
+    this.saveSettings();
+    console.log(`Note Relay: Stored theme hash updated to ${hash.substring(0, 8)}...`);
   }
 
   extractPluginCSS(pluginClass) {
