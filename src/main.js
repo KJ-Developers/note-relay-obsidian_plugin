@@ -272,7 +272,8 @@ class NoteRelay extends obsidian.Plugin {
           vaultName: this.app.vault.getName(),
           hostname: os.hostname(),
           nodeId: this.nodeId,
-          machineName: os.hostname()
+          machineName: os.hostname(),
+          pluginVersion: this.manifest.version
         })
       });
 
@@ -303,6 +304,11 @@ class NoteRelay extends obsidian.Plugin {
 
       if (result.success) {
         this.signalId = result.signalId; this.isConnected = true;
+
+        // Show non-intrusive notice if plugin is outdated
+        if (result.versionOutdated && result.currentVersion) {
+          new obsidian.Notice(`A newer version of Note Relay is available (v${result.currentVersion})`);
+        }
 
         this.startHeartbeat();
         // Fetch TURN credentials after successful registration
