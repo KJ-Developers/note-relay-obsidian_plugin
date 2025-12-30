@@ -473,6 +473,10 @@ class NoteRelay extends obsidian.Plugin {
     const { cssHash, css } = await this.getThemeCSSWithHash();
     sendCallback(msg.cmd === 'PING' ? 'PONG' : 'HANDSHAKE_ACK', {
       version: BUILD_VERSION,
+      pluginVersion: this.manifest.version,
+      capabilities: {
+        themeHashV1: true  // GUI can rely on cssHash being provided for Step 7 theming
+      },
       readOnly: false,
       cssHash: cssHash,
       css: css  // null if unchanged, full CSS if new/changed

@@ -19479,7 +19479,8 @@ var NoteRelay = class extends obsidian.Plugin {
           vaultName: this.app.vault.getName(),
           hostname: os2.hostname(),
           nodeId: this.nodeId,
-          machineName: os2.hostname()
+          machineName: os2.hostname(),
+          pluginVersion: this.manifest.version
         })
       });
       if (!response.ok) {
@@ -19504,6 +19505,9 @@ var NoteRelay = class extends obsidian.Plugin {
       if (result.success) {
         this.signalId = result.signalId;
         this.isConnected = true;
+        if (result.versionOutdated && result.currentVersion) {
+          new obsidian.Notice(`A newer version of Note Relay is available (v${result.currentVersion})`);
+        }
         this.startHeartbeat();
         await this.fetchTurnCredentials();
         return result.signalId;
@@ -19638,6 +19642,11 @@ var NoteRelay = class extends obsidian.Plugin {
     const { cssHash, css } = await this.getThemeCSSWithHash();
     sendCallback(msg.cmd === "PING" ? "PONG" : "HANDSHAKE_ACK", {
       version: BUILD_VERSION,
+      pluginVersion: this.manifest.version,
+      capabilities: {
+        themeHashV1: true
+        // GUI can rely on cssHash being provided for Step 7 theming
+      },
       readOnly: false,
       cssHash,
       css
