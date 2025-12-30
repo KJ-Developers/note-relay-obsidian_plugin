@@ -20239,6 +20239,11 @@ var NoteRelay = class extends obsidian.Plugin {
             peer.safeSend({
               type: msg.cmd === "PING" ? "PONG" : "HANDSHAKE_ACK",
               version: BUILD_VERSION,
+              pluginVersion: this.manifest.version,
+              capabilities: {
+                themeHashV1: true
+                // GUI can rely on cssHash being provided for Step 7 theming
+              },
               readOnly: isReadOnly,
               styles: []
             });
