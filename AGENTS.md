@@ -13,7 +13,7 @@ push branches here.
 | | |
 | --- | --- |
 | plugin id | `note-relay` (the folder Obsidian loads; unique across the directory) |
-| display name | `Note Relay - Obsidian in a Browser` — set 2026-11-13 so the directory title states the app and the browser, which is what separates it from the unrelated `NoteRelay` listing. It is also the in-app Settings entry and the command prefix, so it is deliberately the only place the longer form appears; prose and docs still say Note Relay |
+| display name | `Note Relay - Vault in a Browser` — set 2026-11-13 so the directory title states what the plugin does, which separates it from the unrelated `NoteRelay` listing. **The word "Obsidian" is not allowed in the name**: the directory rejected `Note Relay - Obsidian in a Browser` and hid the entry, and none of the 10,346 names in `community-plugins.json` contains it. "Obsidian" is fine in the description, README and docs |
 | domain / slugs | `noterelay.io`, `noterelay-plugin` (all lowercase) |
 | never write | `NoteRelay`, `NoteRelay.io` — a different publisher already uses that spelling |
 
