@@ -133,3 +133,40 @@ test('a diagram keeps the max-width Mermaid sized it with', () => {
   assert.ok(out);
   assert.match(out, /max-width:\s*206\.75px/);
 });
+
+test('the Mermaid loader asks Obsidian to load its own bundle instead of injecting a script', async () => {
+  const { MarkdownRenderer } = await import('obsidian');
+  const { makeMermaidRenderer } = await import('../src/mermaid');
+
+  // The review flags runtime script creation as arbitrary code execution. This asserts the loader
+  // cannot do it even accidentally: `window.mermaid` is installed by Obsidian's own renderer, and no
+  // element with the tag `script` is ever created.
+  const created: string[] = [];
+  const realCreate = dom.window.document.createElement.bind(dom.window.document);
+  (dom.window.document as any).createElement = (tag: string, ...rest: unknown[]) => {
+    created.push(tag);
+    return (realCreate as any)(tag, ...rest);
+  };
+  (dom.window.Element.prototype as any).createDiv = function createDiv(options?: { cls?: string }) {
+    const element = dom.window.document.createElement('div');
+    if (options?.cls) element.className = options.cls;
+    this.appendChild(element);
+    return element;
+  };
+  (globalThis as any).activeDocument = dom.window.document;
+
+  const initialised: Array<Record<string, unknown>> = [];
+  (MarkdownRenderer as any).render = async () => {
+    (dom.window as any).mermaid = {
+      initialize(options: Record<string, unknown>) { initialised.push(options); },
+      async render() { return { svg: null }; },
+    };
+  };
+
+  const renderer = makeMermaidRenderer({} as any);
+  await renderer('graph TD; A-->B;');
+
+  assert.ok(!created.includes('script'), 'the loader created a script element');
+  assert.equal(initialised.length, 1, 'Obsidian\'s Mermaid API was never configured');
+  assert.equal(initialised[0].htmlLabels, false);
+});

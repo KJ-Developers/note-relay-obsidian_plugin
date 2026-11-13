@@ -46,3 +46,15 @@ export class TFile extends TAbstractFile {
 export class TFolder extends TAbstractFile {
   children: unknown[] = [];
 }
+
+/** The two pieces of the app the Mermaid warm-up uses. `MarkdownRenderer.render` is replaced by the
+ *  test that needs it to install a fake `window.mermaid`. */
+export class Component {
+  load(): void { /* lifecycle only */ }
+  unload(): void { /* lifecycle only */ }
+}
+
+export const MarkdownRenderer = {
+  async render(_app: unknown, _markdown: string, _host: unknown, _sourcePath: string,
+    _component: unknown): Promise<void> { /* no-op: the real one loads Mermaid */ },
+};

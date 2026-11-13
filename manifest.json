@@ -1,9 +1,9 @@
 {
   "id": "note-relay",
   "name": "Note Relay - Vault in a Browser",
-  "version": "0.2.8",
+  "version": "0.2.9",
   "minAppVersion": "1.10.0",
-  "description": "A web version of your Obsidian vault: open it in any browser, at work or on your phone. Dataview, backlinks and your theme keep working because your vault renders them. Nothing is uploaded. noterelay.io",
+  "description": "A web version of your vault: open it in any browser, at work or on your phone. Dataview, backlinks and your theme keep working because your vault renders them. Nothing is uploaded.",
   "author": "KJ Developers",
   "isDesktopOnly": true
 }

@@ -311,7 +311,7 @@ export default class NoteRelayPlugin extends Plugin {
   async onload(): Promise<void> {
     this.adapter = new ObsidianAdapter(this.app);
     // Obsidian ships Mermaid; use it rather than bundling ~5 MB into main.js.
-    this.adapter.useMermaid(makeMermaidRenderer());
+    this.adapter.useMermaid(makeMermaidRenderer(this.app));
     this.statusEl = this.addStatusBarItem();
     this.statusEl.addClass('note-relay-status');
     // The status bar was the only on-screen affordance and it did nothing when clicked — the

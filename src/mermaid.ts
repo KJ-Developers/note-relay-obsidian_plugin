@@ -7,7 +7,9 @@
 //
 // The output is still SVG in note content, which is the one markup form that can carry script and
 // external references, so `mermaid-svg.ts` reduces it to presentation only before it leaves the host.
+import { Component, MarkdownRenderer, type App } from 'obsidian';
 import { MAX_MERMAID_SOURCE, sanitizeMermaidSvg } from './mermaid-svg';
+import { wait } from './timers';
 
 export type MermaidRenderer = (code: string) => Promise<string | null>;
 
@@ -17,8 +19,8 @@ type MermaidApi = {
   render(id: string, text: string): Promise<{ svg?: unknown }>;
 };
 
-/** Obsidian loads Mermaid lazily; this is the path it uses. */
-const MERMAID_SCRIPT = '/lib/mermaid.min.js';
+/** How long to wait for Obsidian to finish loading its own Mermaid. */
+const LOAD_TIMEOUT_MS = 5_000;
 /** A diagram that takes longer than this is not rendered: a preview must never hang on one fence. */
 const RENDER_TIMEOUT_MS = 5_000;
 
@@ -33,12 +35,31 @@ function mermaidApi(): MermaidApi | null {
 }
 
 /**
- * Loads Obsidian's own Mermaid bundle if the preview has not already pulled it in.
+ * Asks Obsidian to load its own Mermaid, without this plugin creating a script element.
  *
- * The script comes from the application, not from a network host: it is the same file Obsidian uses
- * for every `mermaid` fence in its reading view.
+ * The directory review flags runtime `createElement('script')` as arbitrary code execution, and it is
+ * right to: a scanner cannot tell an application-local file from a network host. Obsidian already
+ * knows how to load Mermaid — it does it the first time its markdown renderer meets a mermaid fence —
+ * so the honest way to ask is to give it a fence and throw the result away. `window.mermaid` is set by
+ * that load, and everything after this point is unchanged.
  */
-async function ensureMermaid(): Promise<MermaidApi | null> {
+async function warmUpMermaid(app: App | undefined): Promise<void> {
+  if (!app) return;
+  const host = activeDocument.body.createDiv({ cls: 'note-relay-mermaid-warmup' });
+  const component = new Component();
+  component.load();
+  try {
+    void MarkdownRenderer.render(app, '```mermaid\ngraph TD;\nA-->B;\n```', host, '', component);
+    const deadline = Date.now() + LOAD_TIMEOUT_MS;
+    while (!mermaidApi() && Date.now() < deadline) await wait(50);
+  } catch { /* A renderer that refuses is the same outcome as a timeout: the fence stays as source. */ }
+  finally {
+    component.unload();
+    host.remove();
+  }
+}
+
+async function ensureMermaid(app: App | undefined): Promise<MermaidApi | null> {
   const present = mermaidApi();
   if (present) {
     // Obsidian initialises Mermaid with its own defaults the first time it needs a diagram, and its
@@ -47,16 +68,7 @@ async function ensureMermaid(): Promise<MermaidApi | null> {
     configure(present);
     return present;
   }
-  await new Promise<void>(resolve => {
-    // Same trap as the appearance probe: Document.createEl appends to the document node on
-    // Obsidian 1.14.5 and throws. Create the element and append it to head explicitly.
-    const script = activeDocument.createElement('script');
-    script.src = MERMAID_SCRIPT;
-    script.onload = () => resolve();
-    script.onerror = () => resolve();
-    activeDocument.head.appendChild(script);
-    window.setTimeout(resolve, RENDER_TIMEOUT_MS);
-  });
+  await warmUpMermaid(app);
   const loaded = mermaidApi();
   if (loaded) configure(loaded);
   return loaded;
@@ -90,13 +102,13 @@ function cleanScratch(id: string): void {
  * Every failure path returns null, and the caller leaves the fence visible as its own source: a
  * diagram that cannot be drawn should look like the text the author wrote, not like a broken image.
  */
-export function makeMermaidRenderer(): MermaidRenderer {
+export function makeMermaidRenderer(app?: App): MermaidRenderer {
   return async (code: string): Promise<string | null> => {
     const source = code.trim();
     if (source.length === 0 || source.length > MAX_MERMAID_SOURCE) return null;
     if (hasControlCharacterOtherThanLineWhitespace(source)) return null;
 
-    const api = await ensureMermaid();
+    const api = await ensureMermaid(app);
     if (!api) return null;
 
     sequence += 1;
