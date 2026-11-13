@@ -95,14 +95,14 @@ pnpm install --frozen-lockfile
 pnpm exec tsc --noEmit
 pnpm lint        # Obsidian's own developer-guideline rules, the same set the directory scores
 pnpm test        # unit tests, no network
-NR_WORKER_ORIGIN=https://api.noterelay.io pnpm build   # writes main.js
+pnpm build       # writes main.js, compiled against https://api.noterelay.io
 ```
 
-`pnpm build` compiles the Worker origin into the bundle and refuses to run without `NR_WORKER_ORIGIN`,
-because a compiled-in default is what leaves an installed copy pointing at the wrong service. A release build
-must also pass `node scripts/check-release-build.mjs`, which refuses a bundle that names a development
-endpoint. `pnpm test` runs the pure protocol, framing, adapter-boundary, preview, search and reconnect suites
-against fakes; it does not replace testing in a real vault.
+`pnpm build` compiles the Worker origin into the bundle and defaults to the production origin, so a clean
+checkout builds with no environment at all — which is what the community directory's build verifier does. Set
+`NR_WORKER_ORIGIN` to build against a development Worker, and run `node scripts/check-release-build.mjs`
+afterwards: it refuses a bundle that names a development endpoint. `pnpm test` runs the pure protocol, framing,
+adapter-boundary, preview, search and reconnect suites against fakes; it does not replace testing in a real vault.
 
 ## License
 

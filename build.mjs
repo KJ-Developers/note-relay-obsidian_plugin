@@ -3,21 +3,20 @@ import { build } from 'esbuild';
 /**
  * The Worker origin is compiled in, not read at runtime.
  *
- * Every build must name its endpoint with `NR_WORKER_ORIGIN`. There is deliberately no default: a
- * default would put a development hostname inside a bundle someone publishes, and a published default
- * would leave every installed copy pointing at a Worker that may later be retired. Development and
- * release bundles differ only in this value, and `scripts/check-release-build.mjs` refuses a release
- * build that still names a development endpoint.
+ * `NR_WORKER_ORIGIN` overrides it; unset, the build compiles the **production** origin. That default
+ * is deliberate and is the safer direction: a clean checkout, and the community directory's own build
+ * verifier, must be able to run `pnpm run build` with no environment at all — and if someone does
+ * forget to set a variable, an accidentally-published bundle then points at production rather than at
+ * a development Worker. A development build sets the variable explicitly.
+ * `scripts/check-release-build.mjs` still refuses a bundle that names a development endpoint.
  */
-const origin = (process.env.NR_WORKER_ORIGIN ?? '').trim().replace(/\/+$/, '');
-if (!origin) {
-  throw new Error(
-    'Set NR_WORKER_ORIGIN to the Worker origin this build should talk to, for example\n'
-    + '  NR_WORKER_ORIGIN=https://api.noterelay.io pnpm build',
-  );
-}
+const PRODUCTION_ORIGIN = 'https://api.noterelay.io';
+const origin = (process.env.NR_WORKER_ORIGIN ?? '').trim().replace(/\/+$/, '') || PRODUCTION_ORIGIN;
 if (!/^https:\/\/[a-z0-9.-]+\.[a-z]{2,}(?::\d{2,5})?$/i.test(origin)) {
   throw new Error(`NR_WORKER_ORIGIN must be an https origin, got: ${origin}`);
+}
+if (origin !== PRODUCTION_ORIGIN) {
+  console.log(`Note Relay: building against ${origin} (NR_WORKER_ORIGIN override)`);
 }
 
 await build({
@@ -27,7 +26,8 @@ await build({
   platform: 'browser',
   format: 'cjs',
   target: 'es2022',
-  external: ['obsidian', 'electron'],
+  // `node:os` is reached for the machine label; it is a runtime Electron/Node module, never bundled.
+  external: ['obsidian', 'electron', 'node:os'],
   sourcemap: false,
   minify: false,
   logLevel: 'info',

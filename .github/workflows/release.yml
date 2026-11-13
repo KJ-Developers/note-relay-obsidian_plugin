@@ -10,6 +10,8 @@ on:
 
 permissions:
   contents: write
+  id-token: write
+  attestations: write
 
 jobs:
   release:
@@ -89,3 +91,13 @@ jobs:
             styles.css
           fail_on_unmatched_files: true
           generate_release_notes: true
+
+      # Lets anyone verify the release assets were built from this commit, which is what the
+      # directory's review asks for.
+      - name: Attest release assets
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: |
+            main.js
+            manifest.json
+            styles.css

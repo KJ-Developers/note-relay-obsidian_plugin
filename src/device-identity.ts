@@ -1,3 +1,4 @@
+import { hostname } from 'node:os';
 import { hasControlCharacter } from './characters';
 
 /**
@@ -44,8 +45,7 @@ export type DeviceIdentity = { deviceId: string; machineLabel: string | null };
  */
 export function machineLabel(): string | null {
   try {
-    const os = require('node:os') as { hostname?: () => string };
-    const name = os.hostname?.();
+    const name = hostname();
     if (typeof name !== 'string') return null;
     const trimmed = name.trim();
     if (trimmed.length < 1 || trimmed.length > 64) return null;
