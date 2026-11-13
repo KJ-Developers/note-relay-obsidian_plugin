@@ -3,23 +3,21 @@
 Read and edit an Obsidian vault from a browser, without uploading the vault anywhere.
 
 Note Relay is an Obsidian desktop plugin paired with a browser viewer at [noterelay.io](https://noterelay.io).
-The browser talks to the live vault over an authenticated WebRTC data channel; Cloudflare TURN is used only
-when a direct connection cannot be established. Markdown, rendered Dataview results and images travel over
-that channel — the Note Relay service stores account, host, pairing and authorization records, not note
+The browser talks to the live vault over an authenticated WebRTC data channel, with an encrypted relay used
+only when a direct connection cannot be established. Markdown, rendered Dataview results and images travel
+over that channel — the Note Relay service stores account, host, pairing and authorization records, not note
 bodies.
 
 ## Disclosures
 
-These are stated up front because the plugin needs all three to be useful.
-
-- **An account is required for full access.** Note Relay is an Obsidian plugin plus a hosted service. You
-  sign in at [noterelay.io](https://noterelay.io), pair this vault with your account, and approve the pairing
-  in the browser with the host key fingerprint shown in the plugin.
+- **An account is required.** Reading or editing a vault from a browser both go through a Note Relay account.
+  You sign in at [noterelay.io](https://noterelay.io), pair this vault with your account, and approve the
+  pairing in the browser with the host key fingerprint the plugin shows you.
 - **Payment is required for editing.** Reading your own vault from a browser is free. Saving, creating,
   renaming, moving and deleting notes requires a paid Note Relay subscription. Current plans and prices are on
   [noterelay.io](https://noterelay.io); this repository does not state prices. During the beta, accounts are
   invite-only — request access on the site.
-- **Network use.** See [Network use](#network-use) below for every endpoint the plugin contacts and why.
+- **Network use.** See [Network use](#network-use) below for what the plugin contacts and why.
 
 ## What it does
 
@@ -37,8 +35,7 @@ These are stated up front because the plugin needs all three to be useful.
 
 ## Requirements
 
-- Obsidian 1.10.0 or later, **desktop only** (Windows, macOS, Linux). The plugin uses WebRTC and Node APIs that
-  Obsidian does not expose on mobile.
+- Obsidian 1.10.0 or later, desktop only (Windows, macOS, Linux).
 - A Note Relay account.
 
 ## Install
@@ -46,28 +43,21 @@ These are stated up front because the plugin needs all three to be useful.
 1. In Obsidian, open **Settings → Community plugins → Browse** and search for **Note Relay**.
 2. Select **Install**, then **Enable**.
 
-Manual install, for a build that has not been released yet: download the archive from
-[noterelay.io](https://noterelay.io), or take `main.js`, `manifest.json` and `styles.css` from the latest
-release, and put them in `.obsidian/plugins/note-relay/`. **Settings → Community plugins → Open plugins
-folder** opens that folder for the current vault, so you do not have to find `.obsidian` yourself.
-
-If an older `note-relay` folder is already there, delete it before unzipping; on macOS, Finder refuses to
-replace a folder inside `.obsidian` with "can't be replaced because it is invisible".
-
 The plugin starts with hosting off. Nothing is opened until you turn on **Host this vault** and pair it.
 
 ## Network use
 
 Every request below is made by the plugin from your machine. There is no analytics or telemetry of any kind.
 
-| Endpoint | Purpose | What it sees |
-| --- | --- | --- |
-| `api.noterelay.io` | Account pairing, host presence, WebRTC signalling, short-lived TURN credentials, grant state | Your account id, vault id, connection timing and your IP address |
-| `noterelay.io` | Site pages, the plugin download, and one version check that raises an "update available" notice | An ordinary HTTPS request for a small JSON file |
-| Cloudflare TURN | Encrypted relay used when a direct peer connection fails (symmetric NAT, restrictive firewalls) | Encrypted traffic and connection metadata — not note content |
+- **`api.noterelay.io`** — pairing, host presence, signalling and short-lived relay credentials. It sees your
+  account id, vault id, connection timing and your IP address. It never receives note content.
+- **`noterelay.io`** — the site, the plugin download, and one version check that raises an "update available"
+  notice.
+- **An encrypted relay (Cloudflare TURN)**, used only when a direct connection cannot be established. It
+  carries encrypted traffic and connection metadata, and never holds keys.
 
-Signalling sees connection metadata but not note content: notes travel peer-to-peer, and TURN relays
-encrypted traffic without keys. Cloudflare's logging and retention for these services are outside Note Relay's
+Signalling sees connection metadata but not note content: notes travel peer-to-peer, and the relay forwards
+encrypted traffic without keys. Cloudflare's logging and retention for the relay are outside Note Relay's
 control; the privacy policy at [noterelay.io/privacy](https://noterelay.io/privacy) states what Note Relay
 itself keeps.
 
@@ -84,12 +74,6 @@ itself keeps.
 
 Open an issue on this repository, or email [support@noterelay.io](mailto:support@noterelay.io) if the report
 involves vault content or credentials — please do not paste note text into a public issue.
-
-## Building from source
-
-Node 22+ and pnpm: `pnpm install --frozen-lockfile`, then `pnpm exec tsc --noEmit`, `pnpm lint`, `pnpm test`,
-`pnpm build`. Build, release and contribution details are in [DEVELOPMENT.md](DEVELOPMENT.md); the working
-agreements are in [AGENTS.md](AGENTS.md).
 
 ## License
 
