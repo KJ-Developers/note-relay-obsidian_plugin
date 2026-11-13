@@ -13,11 +13,13 @@ push branches here.
 | | |
 | --- | --- |
 | plugin id | `note-relay` (the folder Obsidian loads; unique across the directory) |
-| display name | `Note Relay` |
+| display name | `Note Relay - Obsidian in a Browser` — set 2026-11-13 so the directory title states the app and the browser, which is what separates it from the unrelated `NoteRelay` listing. It is also the in-app Settings entry and the command prefix, so it is deliberately the only place the longer form appears; prose and docs still say Note Relay |
 | domain / slugs | `noterelay.io`, `noterelay-plugin` (all lowercase) |
 | never write | `NoteRelay`, `NoteRelay.io` — a different publisher already uses that spelling |
 
-Changing the id renames every command id and every user's plugin folder. Do not.
+Changing the id renames every command id and every user's plugin folder. Do not. The display name is safe
+to change — installs are keyed by the id — but it changes the command palette prefix, so it is a release
+decision, not a docs edit.
 
 ## Gates: run all four before any push that could become a release
 

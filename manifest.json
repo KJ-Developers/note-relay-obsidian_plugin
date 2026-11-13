@@ -1,9 +1,9 @@
 {
   "id": "note-relay",
-  "name": "Note Relay",
-  "version": "0.2.5",
+  "name": "Note Relay - Obsidian in a Browser",
+  "version": "0.2.6",
   "minAppVersion": "1.10.0",
-  "description": "Read and edit your vault from a browser, without uploading it anywhere.",
+  "description": "Read and edit your own vault in any browser. Dataview, backlinks and your theme keep working because your vault renders them. Nothing is uploaded. noterelay.io",
   "author": "KJ Developers",
   "isDesktopOnly": true
 }
