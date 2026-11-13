@@ -8,6 +8,19 @@ only when a direct connection cannot be established. Markdown, rendered Dataview
 over that channel — the Note Relay service stores account, host, pairing and authorization records, not note
 bodies.
 
+## Why this exists
+
+Obsidian has no web app. The usual answer is to export notes into a published site, which leaves behind what the
+vault actually does: Dataview queries, backlinks, and edits that come back.
+
+Note Relay connects a browser to the vault running on your desktop. A Dataview table renders the way it does in
+Obsidian, because Obsidian renders it; a save lands in the same Markdown file, and carries the content hash it
+was based on so a concurrent edit is reported as a conflict rather than overwritten. Nothing is uploaded: notes
+travel over an authenticated, encrypted connection between your browser and your machine, and the service keeps
+account, pairing and authorization records rather than note bodies.
+
+**Note Relay is in private beta.** Accounts are invite-only — request access at [noterelay.io](https://noterelay.io).
+
 ## Disclosures
 
 - **An account is required.** Reading or editing a vault from a browser both go through a Note Relay account.
