@@ -12,7 +12,8 @@ bodies.
 
 - **An account is required.** Reading or editing a vault from a browser both go through a Note Relay account.
   You sign in at [noterelay.io](https://noterelay.io), pair this vault with your account, and approve the
-  pairing in the browser with the host key fingerprint the plugin shows you.
+  pairing in the browser with the host key fingerprint the plugin shows you. Hosting starts off: nothing is
+  opened until you turn it on.
 - **Payment is required for editing.** Reading your own vault from a browser is free. Saving, creating,
   renaming, moving and deleting notes requires a paid Note Relay subscription. Current plans and prices are on
   [noterelay.io](https://noterelay.io); this repository does not state prices. During the beta, accounts are
@@ -42,8 +43,6 @@ bodies.
 
 1. In Obsidian, open **Settings → Community plugins → Browse** and search for **Note Relay**.
 2. Select **Install**, then **Enable**.
-
-The plugin starts with hosting off. Nothing is opened until you turn on **Host this vault** and pair it.
 
 ## Network use
 
