@@ -1,0 +1,35 @@
+name: CI
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec tsc --noEmit
+      - run: pnpm test
+      - name: A development bundle is refused as a release
+        env:
+          NR_WORKER_ORIGIN: https://noterelay-auth-dev.example.workers.dev
+        run: |
+          pnpm build
+          if node scripts/check-release-build.mjs; then
+            echo "✗ a development bundle passed the release check" >&2
+            exit 1
+          fi
+          echo "check-release-build correctly refused a development bundle"

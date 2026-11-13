@@ -1,0 +1,87 @@
+name: Release
+
+# A release is published by pushing a tag that equals the version in manifest.json.
+# Obsidian installs from the release whose tag matches that version, so the tag and the
+# manifest asset are checked against each other before anything is uploaded.
+on:
+  push:
+    tags:
+      - '[0-9]+.[0-9]+.[0-9]+'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        run: pnpm exec tsc --noEmit
+
+      - name: Test
+        run: pnpm test
+
+      - name: Tag matches manifest and versions.json
+        run: |
+          node -e '
+            const fs = require("node:fs");
+            const tag = process.env.GITHUB_REF_NAME;
+            const manifest = JSON.parse(fs.readFileSync("manifest.json", "utf8"));
+            const versions = JSON.parse(fs.readFileSync("versions.json", "utf8"));
+            const fail = (message) => { console.error("✗ " + message); process.exit(1); };
+            if (manifest.version !== tag) fail(`manifest.json is ${manifest.version}, tag is ${tag}`);
+            if (versions[tag] !== manifest.minAppVersion) {
+              fail(`versions.json must map ${tag} to minAppVersion ${manifest.minAppVersion}`);
+            }
+            console.log(`release ${tag} matches manifest.json and versions.json`);
+          '
+
+      - name: Build release bundle
+        env:
+          NR_WORKER_ORIGIN: ${{ vars.NR_WORKER_ORIGIN }}
+        run: |
+          if [ -z "$NR_WORKER_ORIGIN" ]; then
+            echo "✗ repository variable NR_WORKER_ORIGIN is not set, so the bundle would point at the development Worker" >&2
+            exit 1
+          fi
+          pnpm build
+          node scripts/check-release-build.mjs
+
+      - name: Confirm the bundle carries the release origin
+        env:
+          NR_WORKER_ORIGIN: ${{ vars.NR_WORKER_ORIGIN }}
+        run: |
+          node -e '
+            const { readFileSync } = require("node:fs");
+            const bundle = readFileSync("main.js", "utf8");
+            const origin = process.env.NR_WORKER_ORIGIN.replace(/\/+$/, "");
+            if (!bundle.includes(origin)) {
+              console.error(`✗ main.js does not contain ${origin}`);
+              process.exit(1);
+            }
+            console.log(`main.js points at ${origin}`);
+          '
+          ls -l main.js manifest.json
+
+      - name: Publish release assets
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            main.js
+            manifest.json
+          fail_on_unmatched_files: true
+          generate_release_notes: true
