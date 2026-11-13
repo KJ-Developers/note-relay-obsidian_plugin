@@ -18,9 +18,13 @@ type PairingApi = {
   present(input: {
     code: string; vaultId: string; hostPublicJwk: StoredHostKey['publicJwk'];
     signature: string; displayLabel: string;
-  }): Promise<boolean>;
+    deviceId?: string; machineLabel?: string;
+  }): Promise<{ ok: boolean; status: number }>;
   confirm(input: { pairingId: string; signature: string }): Promise<boolean>;
 };
+
+/** This machine, as the plugin reports it. Optional: a build without app storage sends nothing. */
+export type PairingDevice = { deviceId: string; machineLabel: string | null };
 
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const codePattern = /^[A-Z2-7]{5}-[A-Z2-7]{5}$/;
@@ -62,7 +66,29 @@ export class PairingFlow {
 
   cancel(): void { this.generation++; this.pending = null; }
 
-  async review(code: string, vaultId: string, vaultLabel: string): Promise<Review> {
+  /**
+   * Presents this vault, with the machine identity when we have one.
+   *
+   * The two device fields are additive, and a Worker that predates them rejects the body for having
+   * keys it does not expect (400). That is not a pairing failure — it is an older server — so the
+   * call is repeated without them rather than showing the owner a refusal for a compatible request.
+   * Anything else is reported as it came.
+   */
+  private async present(
+    code: string, vaultId: string, key: StoredHostKey, signature: string,
+    vaultLabel: string, device: PairingDevice | null,
+  ): Promise<{ ok: boolean; status: number }> {
+    const base = { code, vaultId, hostPublicJwk: key.publicJwk, signature, displayLabel: vaultLabel };
+    if (!device) return this.api.present(base);
+    const withDevice = await this.api.present({ ...base,
+      deviceId: device.deviceId,
+      ...(device.machineLabel ? { machineLabel: device.machineLabel } : {}) });
+    if (withDevice.ok || withDevice.status !== 400) return withDevice;
+    return this.api.present(base);
+  }
+
+  async review(code: string, vaultId: string, vaultLabel: string,
+    device: PairingDevice | null = null): Promise<Review> {
     if (this.busy) throw new Error('Pairing in progress');
     if (!codePattern.test(code) || !uuid.test(vaultId) ||
         vaultLabel.length < 1 || vaultLabel.length > 80 ||
@@ -81,9 +107,9 @@ export class PairingFlow {
         pairingId: lookup.pairingId, vaultId, challenge: lookup.challenge };
       const signature = await signHostPairingProof(key.privateKey, context);
       if (this.generation !== generation) throw new Error('Pairing cancelled');
-      const presented = await this.api.present({ code, vaultId,
-        hostPublicJwk: key.publicJwk, signature, displayLabel: vaultLabel });
-      if (!presented || this.generation !== generation) throw new Error('Pairing unavailable');
+      const presented = await this.present(code, vaultId, key, signature, vaultLabel, device);
+      if (this.generation !== generation) throw new Error('Pairing cancelled');
+      if (!presented.ok) throw new Error('Pairing unavailable');
       const hostKeyId = await hostPairingKeyId(key.publicJwk);
       if (this.generation !== generation) throw new Error('Pairing cancelled');
       const review = { accountEmail: lookup.accountEmail,

@@ -26,11 +26,15 @@ export const pairingApi = {
   async present(input: {
     code: string; vaultId: string; hostPublicJwk: object;
     signature: string; displayLabel: string;
-  }): Promise<boolean> {
+    // Optional and additive: an older Worker validates this body against an exact key list, so the
+    // caller retries without them when that is what came back. See `pairing-flow.ts`.
+    deviceId?: string; machineLabel?: string;
+  }): Promise<{ ok: boolean; status: number }> {
     const result = await post('/v1/pairing/present', input);
-    return result.status === 200 && !!result.value &&
+    return { ok: result.status === 200 && !!result.value &&
       typeof result.value === 'object' &&
-      (result.value as { presented?: unknown }).presented === true;
+      (result.value as { presented?: unknown }).presented === true,
+    status: result.status };
   },
   async confirm(input: { pairingId: string; signature: string }): Promise<boolean> {
     const result = await post('/v1/pairing/confirm', input);

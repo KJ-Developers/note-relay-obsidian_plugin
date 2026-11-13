@@ -8,6 +8,7 @@ import { makeMermaidRenderer } from './mermaid';
 import { HostLifecycle } from './host-lifecycle';
 import { dispatchReadOnly, PROTOCOL_VERSION, sha256Hex, validMarkdownPath, type Reply } from './protocol';
 import { PairingFlow } from './pairing-flow';
+import { getOrCreateDeviceId } from './device-identity';
 import { pairingApi } from './pairing-api';
 import { deviceApi } from './device-api';
 import { DeviceGrantFlow } from './device-grant-client';
@@ -406,8 +407,12 @@ export default class NoteRelayPlugin extends Plugin {
   async pairWithCode(code: string): Promise<{ accountEmail: string; hostKeyId: string;
     pairingId: string; vaultLabel: string; vaultId: string }> {
     const vaultId = await this.pairingVaultId();
+    // Sent so the site can retire this machine's previous row for the same vault name after a
+    // reinstall, instead of listing the vault twice for the rest of the beta. Absent on a host that
+    // refuses app-level storage, which is exactly what an older build sends.
+    const device = getOrCreateDeviceId(this.app);
     const review = await this.pairingFlow().review(code.trim().toUpperCase(),
-      vaultId, this.app.vault.getName());
+      vaultId, this.app.vault.getName(), device);
     return { accountEmail: review.accountEmail, hostKeyId: review.hostKeyId,
       pairingId: review.pairingId, vaultLabel: review.vaultLabel, vaultId };
   }

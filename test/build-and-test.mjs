@@ -11,7 +11,7 @@ const entries = [
   'peer-grant', 'authenticated-read-session', 'pairing-key', 'pairing-key-store', 'pairing-flow',
   'host-presence-proof', 'search', 'transclusion', 'mermaid', 'reconnect', 'host-waiting',
   'host-socket', 'diagnostics', 'device-grant-client', 'account-binding', 'device-api',
-  'release-build-check',
+  'device-identity', 'release-build-check',
 ];
 
 await mkdir('.test-build', { recursive: true });
