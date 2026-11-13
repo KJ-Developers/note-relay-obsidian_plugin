@@ -5,6 +5,8 @@
  * no refresh token — the plugin never holds a credential, which is why losing this file costs a
  * reconnect and nothing else.
  */
+import { hasControlCharacter, withoutControlCharacters } from './characters';
+
 export type AccountBinding = {
   accountId: string;
   email: string;
@@ -20,7 +22,7 @@ export function parseBinding(value: unknown): AccountBinding | null {
   const row = value as Record<string, unknown>;
   if (typeof row.accountId !== 'string' || !uuid.test(row.accountId)) return null;
   if (typeof row.email !== 'string' || row.email.length < 3 || row.email.length > 254 ||
-      !row.email.includes('@') || /[\u0000-\u001f\u007f]/.test(row.email)) return null;
+      !row.email.includes('@') || hasControlCharacter(row.email)) return null;
   if (typeof row.hostKeyId !== 'string' || !fingerprint.test(row.hostKeyId)) return null;
   if (typeof row.pairedAt !== 'string' || !Number.isFinite(Date.parse(row.pairedAt))) return null;
   return {
@@ -38,6 +40,6 @@ export function accountStatusLine(binding: AccountBinding | null): string {
 
 /** A label Obsidian shows in the dashboard and in pairing reviews. Never the path. */
 export function vaultLabel(vaultName: string): string {
-  const trimmed = vaultName.trim().replace(/[\u0000-\u001f\u007f]/g, '');
+  const trimmed = withoutControlCharacters(vaultName.trim());
   return (trimmed || 'This vault').slice(0, 120);
 }

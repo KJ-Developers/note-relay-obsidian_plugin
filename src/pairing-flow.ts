@@ -3,6 +3,7 @@ import {
 } from './pairing-key';
 import { getOrCreateHostKey } from './pairing-key-store';
 import type { StoredHostKey } from './pairing-key-store';
+import { hasControlCharacter } from './characters';
 
 type Lookup = {
   accountId: string; pairingId: string; challenge: string;
@@ -36,7 +37,7 @@ function parseLookup(value: unknown): Lookup & { expiresAtMs: number } {
       typeof row.pairingId !== 'string' || !uuid.test(row.pairingId) ||
       typeof row.challenge !== 'string' || !challengePattern.test(row.challenge) ||
       typeof row.accountEmail !== 'string' || row.accountEmail.length < 3 ||
-      row.accountEmail.length > 254 || /[\u0000-\u001f\u007f]/.test(row.accountEmail) ||
+      row.accountEmail.length > 254 || hasControlCharacter(row.accountEmail) ||
       typeof row.expiresAt !== 'string') throw new Error('Invalid pairing response');
   const expiresAtMs = Date.parse(row.expiresAt);
   if (!Number.isFinite(expiresAtMs) || expiresAtMs <= Date.now() ||
@@ -65,7 +66,7 @@ export class PairingFlow {
     if (this.busy) throw new Error('Pairing in progress');
     if (!codePattern.test(code) || !uuid.test(vaultId) ||
         vaultLabel.length < 1 || vaultLabel.length > 80 ||
-        vaultLabel.trim() !== vaultLabel || /[\u0000-\u001f\u007f]/.test(vaultLabel)) {
+        vaultLabel.trim() !== vaultLabel || hasControlCharacter(vaultLabel)) {
       throw new Error('Invalid pairing request');
     }
     this.busy = true;

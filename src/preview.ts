@@ -1,4 +1,5 @@
 import DOMPurify from 'dompurify';
+import { hasControlCharacter } from './characters';
 import MarkdownIt from 'markdown-it';
 import { extractMath, substituteMath } from './math';
 import { expandTransclusions, wrapEmbeds } from './transclusion';
@@ -54,7 +55,6 @@ const IMAGE_MIME: Record<string, string> = {
   png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp',
 };
 const MAX_INLINE_IMAGES = 20;
-const MAX_INLINE_IMAGE_BYTES = 256 * 1024;
 
 /**
  * Resolves a vault-relative image reference to a data URL, or null to leave a placeholder.
@@ -99,7 +99,7 @@ export function validPreviewClass(value: string): boolean {
 }
 
 function validLinkTarget(target: string): boolean {
-  return target.length > 0 && target.length <= 512 && !/[%\\:\u0000-\u001f\u007f]/u.test(target) &&
+  return target.length > 0 && target.length <= 512 && !/[%\\:]/.test(target) && !hasControlCharacter(target) &&
     !target.startsWith('/') && !target.includes('//') &&
     target.split('/').every(part => part !== '' && part !== '.' && part !== '..');
 }
@@ -311,7 +311,7 @@ function sanitizeHtmlOnly(html: string): string {
     ALLOW_DATA_ATTR: false,
     ALLOW_ARIA_ATTR: false,
     RETURN_DOM_FRAGMENT: true,
-  }) as DocumentFragment;
+  });
   const wrapper = document.createElement('div');
   wrapper.appendChild(safe);
   for (const element of wrapper.querySelectorAll('*')) {
@@ -333,7 +333,7 @@ function sanitizeHtmlOnly(html: string): string {
         }
       } else if (attr.name === 'alt') {
         if (element.tagName !== 'IMG' || attr.value.length > 512 ||
-            /[\u0000-\u001f\u007f]/u.test(attr.value)) {
+            hasControlCharacter(attr.value)) {
           element.removeAttribute(attr.name);
         }
       } else if (MATHML_ELEMENTS.has(element.tagName.toUpperCase()) &&

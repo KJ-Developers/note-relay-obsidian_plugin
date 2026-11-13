@@ -9,6 +9,9 @@ import type NoteRelayPlugin from './main';
  * the vault, then open the reader. Each row states what it does and what happens next, because the
  * failure mode this replaces was "hosting is off and I do not know what to do from there".
  */
+// getSettingDefinitions() is the newer declarative settings API and is not present on the Obsidian
+// version this plugin declares in minAppVersion, so the imperative display() below is the form that
+// runs on every supported version.
 export class NoteRelaySettingsTab extends PluginSettingTab {
   constructor(app: App, private readonly plugin: NoteRelayPlugin) {
     super(app, plugin);
@@ -82,6 +85,8 @@ export class NoteRelaySettingsTab extends PluginSettingTab {
         + 'wrong vault, or if you restored a vault onto a different machine.')
       .addButton(button => button
         .setButtonText('Replace key')
+        // setDestructive() replaced setWarning() in a later Obsidian than minAppVersion 1.10;
+        // setWarning is the correct call for the versions this plugin supports.
         .setWarning()
         .onClick(() => { this.plugin.openReplacePairingKey(); }));
 

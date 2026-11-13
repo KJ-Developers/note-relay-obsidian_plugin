@@ -1,3 +1,5 @@
+import { clearTimer, setTimer } from './timers';
+
 // What a host can truthfully say about a reader that is waiting to connect.
 //
 // The signalling room never tells a host that a reader is queued. Its only frames to a host are
@@ -53,8 +55,8 @@ export class ReaderWaitMonitor {
   constructor(options: ReaderWaitOptions) {
     this.graceMs = options.graceMs ?? READER_WAIT_GRACE_MS;
     this.onChange = options.onChange;
-    this.setTimer = options.setTimer ?? ((callback, ms) => setTimeout(callback, ms));
-    this.clearTimer = options.clearTimer ?? (handle => clearTimeout(handle as ReturnType<typeof setTimeout>));
+    this.setTimer = options.setTimer ?? ((callback, ms) => setTimer(callback, ms));
+    this.clearTimer = options.clearTimer ?? (handle => clearTimer(handle));
   }
 
   /** No timer, no claim: a monitor that never sees a frame never reports anything. */

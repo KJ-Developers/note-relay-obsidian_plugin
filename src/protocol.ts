@@ -1,6 +1,7 @@
 import { safeAppearance } from './appearance';
 import { MAX_SEARCH_RESULTS, MAX_SNIPPET_LENGTH, parseQuery } from './search';
 import type { SearchReport } from './search';
+import { hasControlCharacter, hasControlCharacterOtherThanLineWhitespace } from './characters';
 
 export const PROTOCOL_VERSION = 1;
 export const MAX_REQUEST_BYTES = 16 * 1024;
@@ -137,7 +138,7 @@ export function validMarkdownPath(path: unknown): path is string {
 export function validVaultPath(path: unknown): path is string {
   if (typeof path !== 'string' || path.length < 1 || path.length > 512) return false;
   if (path.startsWith('/') || path.includes('\\') || path.includes('%') || path.includes('//')) return false;
-  if (/[\u0000-\u001f\u007f]/u.test(path)) return false;
+  if (hasControlCharacter(path)) return false;
   const parts = path.split('/');
   return parts.every(part => part !== '' && part !== '.' && part !== '..' && !part.startsWith('.'));
 }
@@ -187,8 +188,6 @@ export async function sha256Hex(value: string): Promise<string> {
 }
 
 const CONTENT_HASH = /^[a-f0-9]{64}$/;
-/** Control characters other than tab, newline and carriage return never belong in a note. */
-const CONTENT_CONTROL = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/u;
 
 function folderOf(path: string): string {
   return path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : '';
@@ -225,7 +224,7 @@ async function applyWrite(
   if (cmd === 'SAVE_NOTE' || cmd === 'CREATE_NOTE') {
     if (typeof source !== 'string') return { ok: false, id, error: 'BAD_REQUEST' };
     if (byteLength(source) > MAX_WRITE_NOTE_BYTES) return { ok: false, id, error: 'TOO_LARGE' };
-    if (CONTENT_CONTROL.test(source)) return { ok: false, id, error: 'FORBIDDEN' };
+    if (hasControlCharacterOtherThanLineWhitespace(source)) return { ok: false, id, error: 'FORBIDDEN' };
   }
   if (cmd === 'SAVE_NOTE' || cmd === 'DELETE_NOTE') {
     if (typeof hash !== 'string' || !CONTENT_HASH.test(hash)) return { ok: false, id, error: 'BAD_REQUEST' };
@@ -416,7 +415,7 @@ export async function dispatchVaultRequest(adapter: VaultAdapter, access: Access
         const all = [...new Set(rawTags
           .filter(tag => typeof tag === 'string')
           .map(tag => tag.replace(/^#/, '').trim())
-          .filter(tag => tag && tag.length <= 128 && !/[\u0000-\u001f\u007f]/u.test(tag)))].sort();
+          .filter(tag => tag && tag.length <= 128 && !hasControlCharacter(tag)))].sort();
         const tags = all.slice(0, MAX_TAGS_PER_FILE);
         // Not silent: a note carrying more tags than the page allows says so, with the real count,
         // so the browser can mark it rather than quietly showing partial membership.
@@ -469,14 +468,14 @@ export async function dispatchVaultRequest(adapter: VaultAdapter, access: Access
     const clean: PropertyEntry[] = [];
     for (const entry of entries) {
       if (!entry || typeof entry !== 'object') return { ok: false, id, error: 'RENDER_FAILED' };
-      const { key, kind, values } = entry as PropertyEntry;
+      const { key, kind, values } = entry;
       if (typeof key !== 'string' || key.length < 1 || key.length > MAX_PROPERTY_KEY) return { ok: false, id, error: 'TOO_LARGE' };
       if (!['text', 'number', 'boolean', 'date', 'list'].includes(kind)) return { ok: false, id, error: 'RENDER_FAILED' };
       if (!Array.isArray(values) || values.length < 1 || values.length > MAX_PROPERTY_VALUES) return { ok: false, id, error: 'TOO_LARGE' };
       if (!values.every(value => typeof value === 'string' && value.length <= MAX_PROPERTY_VALUE)) return { ok: false, id, error: 'TOO_LARGE' };
-      if (/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/u.test(key) || values.some(value =>
-        /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/u.test(value))) return { ok: false, id, error: 'FORBIDDEN' };
-      clean.push({ key, kind: kind as PropertyEntry['kind'], values: [...values] });
+      if (hasControlCharacterOtherThanLineWhitespace(key) || values.some(value =>
+        hasControlCharacterOtherThanLineWhitespace(value))) return { ok: false, id, error: 'FORBIDDEN' };
+      clean.push({ key, kind, values: [...values] });
     }
     if (byteLength(JSON.stringify(clean)) > MAX_PROPERTIES_BYTES) return { ok: false, id, error: 'TOO_LARGE' };
     return { ok: true, id, data: { path, properties: clean } };

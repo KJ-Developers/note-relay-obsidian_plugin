@@ -24,13 +24,13 @@ test('corrupt persisted key fails closed instead of being replaced', async () =>
   const request = factory.open('noterelay-host-keys', 1);
   const db = await new Promise<IDBDatabase>((resolve, reject) => {
     request.onsuccess = () => resolve(request.result);
-    request.onerror = () => reject(request.error);
+    request.onerror = () => reject(request.error ?? new Error('open failed'));
   });
   await new Promise<void>((resolve, reject) => {
     const transaction = db.transaction('keys', 'readwrite');
     transaction.objectStore('keys').put({ ...original, publicJwk: { ...original.publicJwk, x: 'bad' } });
     transaction.oncomplete = () => resolve();
-    transaction.onerror = () => reject(transaction.error);
+    transaction.onerror = () => reject(transaction.error ?? new Error('put failed'));
   });
   db.close();
   await assert.rejects(getOrCreateHostKey(vaultId, factory), /Invalid stored host key/);

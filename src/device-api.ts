@@ -41,7 +41,7 @@ async function post(path: string, body: object): Promise<{ status: number; value
 
 /** Turns a status and body into the sentence the person needs, after the mapping. */
 function refusal(status: number, value: unknown): DeviceApiError {
-  const body = (value ?? null) as ApiBody;
+  const body: ApiBody | null = value ?? null;
   const code = typeof body?.error === 'string' ? body.error : 'UNKNOWN';
   const wait = typeof body?.retryAfterSeconds === 'number' ? body.retryAfterSeconds : undefined;
 

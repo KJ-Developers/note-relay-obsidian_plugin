@@ -146,11 +146,11 @@ test('a poll that is rate limited waits instead of ending the connection attempt
         hostKeyId: 'k'.repeat(43), vaultId: crypto.randomUUID() };
     },
   };
-  const flow = new DeviceGrantFlow(api as never);
+  const flow = new DeviceGrantFlow(api);
   const started = { deviceCode: 'd'.repeat(43), userCode: 'ABCDE-FGHIJ',
     verificationUrl: 'https://noterelay.io/link', intervalSeconds: 1,
     expiresAtMs: Date.now() + 30_000, grantId: 'g', challenge: 'c'.repeat(43) };
-  const answer = await flow.wait(started as never);
+  const answer = await flow.wait(started);
   assert.equal(answer.state, 'approved');
   assert.equal(calls, 2);
 });

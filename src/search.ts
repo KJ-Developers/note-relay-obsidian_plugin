@@ -19,6 +19,8 @@
 export const MAX_QUERY_LENGTH = 200;
 /** Results are bounded; the list is a way in, not an export of the vault. */
 export const MAX_SEARCH_RESULTS = 200;
+import { hasControlCharacter } from './characters';
+
 /** Excerpt around the first match, so a title is not the only thing distinguishing two hits. */
 export const MAX_SNIPPET_LENGTH = 160;
 
@@ -28,7 +30,7 @@ export type SearchTerm = { value: string; negated: boolean };
 export function parseQuery(query: string): SearchTerm[] | null {
   const trimmed = query.trim();
   if (trimmed.length === 0 || trimmed.length > MAX_QUERY_LENGTH) return null;
-  if (/[\u0000-\u001f\u007f]/.test(trimmed)) return null;
+  if (hasControlCharacter(trimmed)) return null;
   const terms: SearchTerm[] = [];
   const pattern = /(-?)"([^"]+)"|(-?)([^\s"]+)/g;
   for (const match of trimmed.matchAll(pattern)) {

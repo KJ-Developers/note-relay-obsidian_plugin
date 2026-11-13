@@ -1,6 +1,6 @@
 {
   "name": "noterelay-plugin",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Note Relay Obsidian plugin: read and edit a vault from a browser over an authenticated WebRTC channel.",
   "license": "MIT",
   "private": true,
@@ -12,7 +12,8 @@
   "homepage": "https://noterelay.io",
   "scripts": {
     "build": "node build.mjs",
-    "test": "node test/build-and-test.mjs"
+    "test": "node test/build-and-test.mjs",
+    "lint": "eslint src"
   },
   "dependencies": {
     "dompurify": "^3.2.7",
@@ -25,9 +26,12 @@
     "@types/markdown-it": "^14.2.0",
     "@types/node": "^24.0.0",
     "esbuild": "^0.25.0",
+    "eslint": "^9.39.5",
+    "eslint-plugin-obsidianmd": "^0.5.1",
     "fake-indexeddb": "^6.2.6",
     "jsdom": "^27.0.0",
     "obsidian": "^1.10.3",
-    "typescript": "^5.9.0"
+    "typescript": "^5.9.0",
+    "typescript-eslint": "^8.72.2"
   }
 }

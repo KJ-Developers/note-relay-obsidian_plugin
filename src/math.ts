@@ -15,6 +15,8 @@ export const MAX_MATHML_LENGTH = 20_000;
 /** A note with thousands of expressions is not a note we should be spending the main thread on. */
 export const MAX_EXPRESSIONS = 200;
 
+import { hasControlCharacterOtherThanLineWhitespace } from './characters';
+
 /**
  * Renders one TeX expression to MathML, or returns null so the caller can leave the source visible.
  *
@@ -24,7 +26,7 @@ export const MAX_EXPRESSIONS = 200;
 export function renderMath(tex: string, display: boolean): string | null {
   const source = tex.trim();
   if (source.length === 0 || source.length > MAX_TEX_LENGTH) return null;
-  if (/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/.test(source)) return null;
+  if (hasControlCharacterOtherThanLineWhitespace(source)) return null;
   try {
     const mathml = temml.renderToString(source, {
       displayMode: display, throwOnError: true, strict: false,

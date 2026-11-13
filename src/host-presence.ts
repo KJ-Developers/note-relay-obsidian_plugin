@@ -3,6 +3,7 @@ import type { StoredHostKey } from './pairing-key-store';
 import type { AuthorizationLease } from './authenticated-read-session';
 import { signPresence, type PresenceProof } from './host-presence-proof';
 import { WORKER_ORIGIN } from './endpoints';
+import { clearTimer, setTimer } from './timers';
 
 // The paired key signs presence. This endpoint never receives vault content.
 const ORIGIN = WORKER_ORIGIN;
@@ -25,7 +26,7 @@ export async function sendPresence(proof: PresenceProof): Promise<{ status: numb
 // for a pending renewal so that a delayed response cannot restore presence.
 export class HostPresenceClient {
   private active = false;
-  private timer: ReturnType<typeof setTimeout> | null = null;
+  private timer: unknown = null;
   private current: Promise<void> = Promise.resolve();
   private lastIssuedAtMs = 0;
   private authorization: AuthorizationLease | null = null;
@@ -79,14 +80,14 @@ export class HostPresenceClient {
         return;
       }
     } catch { /* The previous short lease expires without a successful renewal. */ }
-    if (this.active) this.timer = setTimeout(() => { this.current = this.renew(); }, 25_000);
+    if (this.active) this.timer = setTimer(() => { this.current = this.renew(); }, 25_000);
   }
 
   async stop(): Promise<void> {
     if (!this.active) return;
     this.active = false;
     this.authorization = null;
-    if (this.timer) clearTimeout(this.timer);
+    if (this.timer) clearTimer(this.timer);
     await this.current.catch(() => {});
     try {
       const proof = await signPresence('stop', this.vaultId,

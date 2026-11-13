@@ -42,6 +42,8 @@ export type EmbedResult = {
  */
 const EMBED = /!\[\[([^\]\r\n|]{1,512})\]\]/g;
 
+import { hasControlCharacter } from './characters';
+
 /** Private-use markers around an embedded note, replaced with a wrapper after rendering. */
 export const EMBED_START = '\uE002';
 export const EMBED_END = '\uE003';
@@ -53,7 +55,7 @@ export function splitEmbedTarget(raw: string): { target: string; heading: string
   const hash = trimmed.indexOf('#');
   const target = (hash === -1 ? trimmed : trimmed.slice(0, hash)).trim();
   if (target.length === 0 || target.length > 512) return null;
-  if (/[%\\:\u0000-\u001f\u007f]/u.test(target) || target.startsWith('/') || target.includes('//')) return null;
+  if (/[%\\:]/.test(target) || hasControlCharacter(target) || target.startsWith('/') || target.includes('//')) return null;
   if (!target.split('/').every(part => part !== '' && part !== '.' && part !== '..' && !part.startsWith('.'))) return null;
   if (hash === -1) return { target, heading: null, block: false };
   const fragment = trimmed.slice(hash + 1).trim();

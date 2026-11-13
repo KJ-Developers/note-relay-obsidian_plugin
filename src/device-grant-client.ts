@@ -1,5 +1,6 @@
 import { getOrCreateHostKey, type StoredHostKey } from './pairing-key-store';
 import type { HostPublicJwk } from './pairing-key';
+import { wait } from './timers';
 
 /**
  * The plugin's half of the device grant.
@@ -133,7 +134,7 @@ export class DeviceGrantFlow {
       const key = await this.keyStore(input.vaultId);
       const authorized = parseAuthorize(await this.api.authorize({
         vaultId: input.vaultId,
-        hostPublicJwk: key.publicJwk as HostPublicJwk,
+        hostPublicJwk: key.publicJwk,
         displayLabel: input.displayLabel,
       }));
       const signature = await signProof(key.privateKey, deviceGrantProofBytes({
@@ -181,10 +182,10 @@ export class DeviceGrantFlow {
         const refusal = error as { status?: number; retryAfterSeconds?: number };
         if (refusal?.status !== 429) throw error;
         const holdMs = Math.min((refusal.retryAfterSeconds ?? 60) * 1_000, 120_000);
-        await new Promise(resolve => setTimeout(resolve, holdMs));
+        await wait(holdMs);
         continue;
       }
-      await new Promise(resolve => setTimeout(resolve, started.intervalSeconds * 1_000));
+      await wait(started.intervalSeconds * 1_000);
     }
     return { state: 'expired' };
   }

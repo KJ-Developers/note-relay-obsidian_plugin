@@ -22,6 +22,7 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
       - run: pnpm exec tsc --noEmit
+      - run: pnpm lint
       - run: pnpm test
       - name: A development bundle is refused as a release
         env:

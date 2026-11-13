@@ -21,6 +21,13 @@ import type { AuthorizationLease } from './authenticated-read-session';
 
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
+/**
+ * An event listener is typed to return nothing; an async handler returns a promise whose rejection
+ * would otherwise be unhandled. This keeps the handler's own try/catch as the single place a failure
+ * is reported, and satisfies the listener contract without pretending the work is synchronous.
+ */
+const fireAndForget = (handler: () => Promise<void>): (() => void) => () => { void handler(); };
+
 class PairingModal extends Modal {
   private get flow(): PairingFlow { return this.plugin.pairingFlow(); }
 
@@ -36,7 +43,7 @@ class PairingModal extends Modal {
     });
     const status = this.contentEl.createEl('p');
     const reviewButton = this.contentEl.createEl('button', { text: 'Review pairing' });
-    reviewButton.addEventListener('click', async () => {
+    reviewButton.addEventListener('click', fireAndForget(async () => {
       reviewButton.disabled = true;
       status.setText('Checking pairing code…');
       try {
@@ -49,7 +56,7 @@ class PairingModal extends Modal {
         const result = this.contentEl.createEl('p');
         result.setText('Approve the fingerprint in the browser, then confirm here.');
         const confirmButton = this.contentEl.createEl('button', { text: 'Confirm in Obsidian' });
-        confirmButton.addEventListener('click', async () => {
+        confirmButton.addEventListener('click', fireAndForget(async () => {
           confirmButton.disabled = true;
           result.setText('Confirming pairing…');
           try {
@@ -61,12 +68,12 @@ class PairingModal extends Modal {
           } catch {
             result.setText('Pairing unavailable or expired. Start with a new code.');
           }
-        });
+        }));
       } catch {
         status.setText('Pairing code unavailable. Check the code or try again later.');
         reviewButton.disabled = false;
       }
-    });
+    }));
   }
 
   onClose(): void {
@@ -105,7 +112,7 @@ class ReplacePairingKeyModal extends Modal {
       const button = this.contentEl.createEl('button', { text: 'Replace local key' });
       button.disabled = true;
       input.addEventListener('input', () => { button.disabled = input.value !== 'REPLACE'; });
-      button.addEventListener('click', async () => {
+      button.addEventListener('click', fireAndForget(async () => {
         if (input.value !== 'REPLACE') return;
         button.disabled = true;
         result.setText('Replacing local key…');
@@ -119,7 +126,7 @@ class ReplacePairingKeyModal extends Modal {
           result.setText('Key replacement failed. The current key was not changed.');
           button.disabled = false;
         }
-      });
+      }));
     } catch (error) {
       if (!this.closed) status.setText(error instanceof Error ? error.message : 'Local key unavailable.');
     }
@@ -165,15 +172,14 @@ class LocalPeerModal extends Modal {
     if (folders.length > 0) this.contentEl.createEl('p', { text: `Folders: ${folders.join(', ')}` });
     const rasterInput = this.contentEl.createEl('input', { attr: { type: 'text', placeholder: 'Raster asset path in test vault' } });
     const rasterStatus = this.contentEl.createEl('p');
-    this.contentEl.createEl('button', { text: 'Test raster read' }).addEventListener('click', async () => {
+    this.contentEl.createEl('button', { text: 'Test raster read' }).addEventListener('click', fireAndForget(async () => {
       const result = await this.request('READ_RASTER', rasterInput.value);
       if (!result.ok) { rasterStatus.setText(`Raster read: ${result.error}`); return; }
       const data = result.data as { mime: string; base64: string };
       rasterStatus.setText(`Raster read: ${data.mime} · ${Math.floor(data.base64.length * 3 / 4)} encoded bytes`);
-    });
+    }));
     const status = this.contentEl.createEl('p');
     const preview = this.contentEl.createDiv({ cls: 'markdown-preview-view noterelay-local-preview' });
-    preview.style.cssText = 'max-height:50vh;overflow:auto;border:1px solid var(--background-modifier-border);padding:1rem';
     const load = async () => {
       const path = select.value;
       if (!path) return;
@@ -186,7 +192,13 @@ class LocalPeerModal extends Modal {
       }
       const data = rendered.data as { html: string; state: string; renderer: string };
       status.setText(`${path} · ${data.state} · ${data.renderer} · ${(raw.data as { source: string }).source.length} source characters`);
-      preview.innerHTML = data.html;
+      // Parsed by the DOMParser-free range API rather than assigned to innerHTML: RENDER_PREVIEW
+      // returns preview.ts output (markdown-it, then DOMPurify with an explicit allow-list), and
+      // inserting it as nodes keeps the sanitiser as the only thing that ever built markup.
+      const range = activeDocument.createRange();
+      range.selectNodeContents(preview);
+      // eslint-disable-next-line no-unsanitized/method -- RENDER_PREVIEW returns preview.ts output, already DOMPurify-sanitised against an explicit allow-list
+      preview.appendChild(range.createContextualFragment(data.html));
     };
     select.addEventListener('change', () => { void load(); });
     await load();
@@ -260,11 +272,7 @@ class ConnectVaultModal extends Modal {
             button.setButtonText('Select it above');
           }
         }));
-      const code = codeSetting.controlEl.createEl('div', { text: started.userCode });
-      code.style.userSelect = 'text';
-      code.style.fontFamily = 'var(--font-monospace)';
-      code.style.fontSize = '1.35em';
-      code.style.letterSpacing = '0.1em';
+      codeSetting.controlEl.createDiv({ text: started.userCode, cls: 'note-relay-code' });
 
       const status = contentEl.createEl('p', { cls: 'setting-item-description',
         text: 'Waiting for approval — this window closes by itself.' });
@@ -324,7 +332,7 @@ export default class NoteRelayPlugin extends Plugin {
     this.addCommand({ id: 'open-local-peer', name: 'Open same-machine read test', callback: () => new LocalPeerModal(this.app, this).open() });
     this.addCommand({ id: 'pair-vault', name: 'Pair this vault', callback: () => this.openPairing() });
     this.addCommand({ id: 'replace-pairing-key', name: 'Replace local pairing key', callback: () => this.openReplacePairingKey() });
-    this.addCommand({ id: 'open-settings', name: 'Open Note Relay settings', callback: () => {
+    this.addCommand({ id: 'open-settings', name: 'Open settings pane', callback: () => {
       // Opens the pane this plugin now owns, so the palette can reach it too.
       const setting = (this.app as unknown as { setting?: { open(): void; openTabById(id: string): void } }).setting;
       setting?.open();
@@ -489,7 +497,8 @@ export default class NoteRelayPlugin extends Plugin {
       entry.timer = window.setTimeout(() => {
         void (async () => {
           try {
-            const source = await this.app.vault.cachedRead(file as TFile);
+            if (!(file instanceof TFile)) return;
+            const source = await this.app.vault.cachedRead(file);
             const hash = await sha256Hex(source);
             if (hash === entry.lastHash) return;
             entry.lastHash = hash;

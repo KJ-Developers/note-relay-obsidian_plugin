@@ -22,6 +22,8 @@ const MERMAID_SCRIPT = '/lib/mermaid.min.js';
 /** A diagram that takes longer than this is not rendered: a preview must never hang on one fence. */
 const RENDER_TIMEOUT_MS = 5_000;
 
+import { hasControlCharacterOtherThanLineWhitespace } from './characters';
+
 let sequence = 0;
 let initialised = false;
 
@@ -46,11 +48,11 @@ async function ensureMermaid(): Promise<MermaidApi | null> {
     return present;
   }
   await new Promise<void>(resolve => {
-    const script = document.createElement('script');
+    const script = activeDocument.createEl('script');
     script.src = MERMAID_SCRIPT;
     script.onload = () => resolve();
     script.onerror = () => resolve();
-    document.head.appendChild(script);
+    activeDocument.head.appendChild(script);
     window.setTimeout(resolve, RENDER_TIMEOUT_MS);
   });
   const loaded = mermaidApi();
@@ -77,7 +79,7 @@ function configure(api: MermaidApi): void {
 
 /** Mermaid creates a scratch element named `d<id>` and removes it on success; make sure it goes. */
 function cleanScratch(id: string): void {
-  document.getElementById(`d${id}`)?.remove();
+  activeDocument.getElementById(`d${id}`)?.remove();
 }
 
 /**
@@ -90,7 +92,7 @@ export function makeMermaidRenderer(): MermaidRenderer {
   return async (code: string): Promise<string | null> => {
     const source = code.trim();
     if (source.length === 0 || source.length > MAX_MERMAID_SOURCE) return null;
-    if (/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/.test(source)) return null;
+    if (hasControlCharacterOtherThanLineWhitespace(source)) return null;
 
     const api = await ensureMermaid();
     if (!api) return null;

@@ -93,6 +93,7 @@ Node 22+ and pnpm.
 ```bash
 pnpm install --frozen-lockfile
 pnpm exec tsc --noEmit
+pnpm lint        # Obsidian's own developer-guideline rules, the same set the directory scores
 pnpm test        # unit tests, no network
 NR_WORKER_ORIGIN=https://api.noterelay.io pnpm build   # writes main.js
 ```

@@ -1,5 +1,6 @@
 import { frameReply } from './framing';
 import type { Reply } from './protocol';
+import { clearTimer, setTimer } from './timers';
 
 export const MAX_BUFFERED_BYTES = 256 * 1024;
 export const SEND_WAIT_MS = 10_000;
@@ -20,12 +21,12 @@ function waitForSpace(channel: WritableChannel, signal: AbortSignal): Promise<vo
       channel.removeEventListener('bufferedamountlow', onLow);
       channel.removeEventListener('close', onClose);
       signal.removeEventListener('abort', onAbort);
-      clearTimeout(timeout);
+      clearTimer(timeout);
     };
     const onLow = () => { if (channel.bufferedAmount <= MAX_BUFFERED_BYTES / 2) { clean(); resolve(); } };
     const onAbort = () => { clean(); reject(new Error('Host stopped')); };
     const onClose = () => { clean(); reject(new Error('Peer closed')); };
-    const timeout = setTimeout(() => { clean(); reject(new Error('Peer stalled')); }, SEND_WAIT_MS);
+    const timeout = setTimer(() => { clean(); reject(new Error('Peer stalled')); }, SEND_WAIT_MS);
     channel.bufferedAmountLowThreshold = MAX_BUFFERED_BYTES / 2;
     channel.addEventListener('bufferedamountlow', onLow);
     channel.addEventListener('close', onClose);

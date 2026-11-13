@@ -1,5 +1,6 @@
 import { App, TFile, TFolder } from 'obsidian';
 import { renderStaticPreview } from './preview';
+import { hasControlCharacter } from './characters';
 import { appearanceColors, appearanceFonts, safeAppearance, safeColor } from './appearance';
 import { DataviewGate } from './dataview-gate';
 import type { MermaidRenderer } from './mermaid';
@@ -9,7 +10,7 @@ import { MAX_SEARCH_BYTES, MAX_SEARCH_RESULTS, YIELD_EVERY, matchNote, parseQuer
 import { MAX_PROPERTY_VALUE, MAX_PROPERTY_VALUES, MAX_PROPERTIES, matchesRasterSignature,
   validMarkdownPath,
   validVaultPath } from './protocol';
-import type { Appearance, FileRef, Preview, PropertyEntry, PropertyKind, VaultAdapter, WriteOutcome, WritableVaultAdapter } from './protocol';
+import type { Appearance, FileRef, Preview, PropertyEntry, PropertyKind, WriteOutcome, WritableVaultAdapter } from './protocol';
 
 /** Collapses a frontmatter value into display strings. Never returns markup. */
 function propertyValues(value: unknown): { kind: PropertyKind; values: string[] } | null {
@@ -72,7 +73,7 @@ export class ObsidianAdapter implements WritableVaultAdapter {
     if (!cache) return [];
     const result: string[] = [];
     for (const item of cache.tags ?? []) if (typeof item.tag === 'string') result.push(item.tag);
-    const frontmatter = cache.frontmatter?.tags;
+    const frontmatter: unknown = cache.frontmatter?.tags;
     if (typeof frontmatter === 'string') result.push(...frontmatter.split(/[ ,]+/u));
     else if (Array.isArray(frontmatter)) result.push(...frontmatter.filter((tag): tag is string => typeof tag === 'string'));
     return result;
@@ -107,7 +108,7 @@ export class ObsidianAdapter implements WritableVaultAdapter {
     const entries: PropertyEntry[] = [];
     for (const [key, value] of Object.entries(frontmatter)) {
       if (entries.length >= MAX_PROPERTIES) break;
-      if (key === 'position' || !/^[^\u0000-\u001f\u007f]{1,128}$/u.test(key)) continue;
+      if (key === 'position' || key.length < 1 || key.length > 128 || hasControlCharacter(key)) continue;
       const collapsed = propertyValues(value);
       if (collapsed) entries.push({ key, kind: collapsed.kind, values: collapsed.values });
     }
@@ -301,15 +302,14 @@ export class ObsidianAdapter implements WritableVaultAdapter {
   }
 
   appearance(): Appearance {
-    const styles = getComputedStyle(document.body);
+    const styles = getComputedStyle(activeDocument.body);
     const tokens: Record<string, string> = {};
     // Computed custom properties may still contain var() or hsl(); resolve each
     // through the browser's color parser, then serialize only literal colors.
-    const probe = document.createElement('span');
-    probe.style.cssText = 'position:absolute;visibility:hidden;color:rgb(1, 2, 3)';
-    const sample = document.createElement('span');
+    const probe = activeDocument.createSpan({ cls: 'note-relay-color-probe' });
+    const sample = activeDocument.createSpan();
     probe.appendChild(sample);
-    document.body.appendChild(probe);
+    activeDocument.body.appendChild(probe);
     try {
       for (const name of appearanceColors) {
         const raw = styles.getPropertyValue(name);
@@ -324,6 +324,6 @@ export class ObsidianAdapter implements WritableVaultAdapter {
       probe.remove();
     }
     for (const name of appearanceFonts) tokens[name] = styles.getPropertyValue(name);
-    return safeAppearance({ mode: document.body.classList.contains('theme-dark') ? 'dark' : 'light', tokens });
+    return safeAppearance({ mode: activeDocument.body.classList.contains('theme-dark') ? 'dark' : 'light', tokens });
   }
 }

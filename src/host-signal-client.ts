@@ -10,6 +10,7 @@ import { validMarkdownPath } from './protocol';
 import type { VaultAdapter } from './protocol';
 
 import { WORKER_ORIGIN, WORKER_SOCKET } from './endpoints';
+import { clearTimer, setTimer } from './timers';
 import { reconnectDelay, serverHintedDelay } from './reconnect';
 import type { HostCloseRecord } from './diagnostics';
 import type { ReaderWaitMonitor } from './host-waiting';
@@ -30,7 +31,7 @@ export class HostSignalClient {
   private readSession: AuthenticatedReadSession | null = null;
   private usedGrantIds = new Set<string>();
   private pendingIce: RTCIceCandidateInit[] = [];
-  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private reconnectTimer: unknown = null;
   /** Consecutive failed attempts, so the retry delay can grow and then reset on success. */
   private retryAttempt = 0;
   /**
@@ -88,7 +89,7 @@ export class HostSignalClient {
     this.retryAttempt = 0;
     // Hosting was turned off, so any "a reader is waiting" claim is stale by definition.
     this.readerWait?.disconnected();
-    if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
+    if (this.reconnectTimer) clearTimer(this.reconnectTimer);
     this.socket?.close(); this.socket = null;
     this.closePeer();
   }
@@ -136,7 +137,7 @@ export class HostSignalClient {
         this.retryAttempt += 1;
         const hinted = serverHintedDelay(event.reason);
         const delay = hinted ?? reconnectDelay(this.retryAttempt);
-        this.reconnectTimer = setTimeout(() => { void this.connect(); }, delay);
+        this.reconnectTimer = setTimer(() => { void this.connect(); }, delay);
       };
       socket.onerror = () => socket.close();
     } catch { /* A later lease renewal can retry without enabling vault access. */ }

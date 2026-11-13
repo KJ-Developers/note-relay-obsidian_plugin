@@ -88,7 +88,7 @@ export async function verifyPeerGrant(
     hostSessionId: payload.host_session_id,
     clientKey: payload.client_key,
     scope: payload.scope,
-    entitlementRevision: payload.entitlement_revision as number,
+    entitlementRevision: payload.entitlement_revision,
     id: payload.jti,
     nonce: payload.nonce,
     expiresAt: payload.exp!,

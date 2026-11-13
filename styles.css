@@ -1,0 +1,25 @@
+/* The plugin's only stylesheet. Obsidian loads styles.css from the plugin folder automatically,
+   so class names here are what main.ts and obsidian-adapter.ts apply; nothing is written inline. */
+
+/* The pairing code, readable across a room and selectable so it can be copied by hand. */
+.note-relay-code {
+  user-select: text;
+  font-family: var(--font-monospace);
+  font-size: 1.35em;
+  letter-spacing: 0.1em;
+}
+
+/* The same-machine read test's preview pane. */
+.noterelay-local-preview {
+  max-height: 50vh;
+  overflow: auto;
+  border: 1px solid var(--background-modifier-border);
+  padding: 1rem;
+}
+
+/* A hidden probe used to resolve theme colours; never visible. */
+.note-relay-color-probe {
+  position: absolute;
+  visibility: hidden;
+  color: rgb(1, 2, 3);
+}

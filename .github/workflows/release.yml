@@ -32,6 +32,9 @@ jobs:
       - name: Typecheck
         run: pnpm exec tsc --noEmit
 
+      - name: Lint (the directory's own rule set)
+        run: pnpm lint
+
       - name: Test
         run: pnpm test
 
@@ -83,5 +86,6 @@ jobs:
           files: |
             main.js
             manifest.json
+            styles.css
           fail_on_unmatched_files: true
           generate_release_notes: true

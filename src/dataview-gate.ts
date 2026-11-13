@@ -1,3 +1,5 @@
+import { clearTimer, setTimer } from './timers';
+
 export class DataviewGate {
   private running = false;
 
@@ -13,10 +15,15 @@ export class DataviewGate {
       () => { this.running = false; },
     );
     return new Promise<string>((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error('Dataview timed out')), this.timeoutMs);
+      const timer = setTimer(() => reject(new Error('Dataview timed out')), this.timeoutMs);
       void work.then(
-        value => { clearTimeout(timer); resolve(value); },
-        error => { clearTimeout(timer); reject(error); },
+        value => { clearTimer(timer); resolve(value); },
+        error => {
+          clearTimer(timer);
+          // A rejection reason that is not an Error loses its stack in every consumer, so it is
+          // wrapped rather than passed through.
+          reject(error instanceof Error ? error : new Error(String(error)));
+        },
       );
     });
   }
