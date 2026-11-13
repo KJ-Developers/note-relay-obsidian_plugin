@@ -45,14 +45,53 @@ into a new error). Fix the finding; do not suppress it.
 
 ## Release procedure
 
-1. Bump `version` in `manifest.json`, add the same version to `versions.json` mapped to `minAppVersion`, and
-   keep `package.json` in step.
-2. Commit, then `git tag <version>` and push the tag. The Release workflow typechecks, lints, tests, builds
-   with the production Worker, refuses a development origin, and attaches `main.js`, `manifest.json` and
-   `styles.css`.
-3. Never hand-edit or commit `main.js`; it is generated and gitignored.
+```bash
+node scripts/release.mjs <version> --dry-run   # the rules and all four gates, nothing pushed
+node scripts/release.mjs <version>             # bump, gate, commit, tag, push, verify the release
+```
 
-The directory downloads the release whose tag equals the manifest version, and it re-scans **every** version.
+The script exists because prose did not stop two directory rejections: the description said the word
+"Obsidian" and `mermaid.ts` created a `<script>` element at runtime. Both were found by the reviewer, not
+by us. It refuses on a dirty tree, on a branch other than `main`, when `origin/main` has moved, and when
+the listing rules below are broken — then verifies the published release and greps the built `main.js`
+for runtime script creation.
+
+### The listing rules the directory enforces
+
+| rule | detail |
+| --- | --- |
+| no "Obsidian" in `name` | none of the 10,346 names in `community-plugins.json` contains it; an entry using it is hidden until renamed |
+| no "Obsidian" in `description` | "it is implied by the context of the plugin directory"; say "your vault" instead |
+| description ends with `.` `!` or `?` | a checker warning, cheap to satisfy |
+| no runtime `createElement('script')` | read as arbitrary code execution; ask Obsidian to load its own Mermaid instead (`mermaid.ts` shows the pattern) |
+| `id` stays `note-relay` | it is the folder Obsidian loads and every command id |
+| tag == `manifest.version` | the directory downloads that release, and re-scans **every** version |
+
+### What the manifest does NOT control
+
+The listing page — title, the two-line description under it, and the gallery — is **dashboard state**, not
+repository state. `community-plugins.json` keeps whatever was typed there, so a release can be correct and
+the entry still show month-old text. After any release that changes the name or description, the owner
+edits three dashboard fields: **name**, **short description** (same two rules), **version** (must match the
+tag or the scan never runs). The README *is* repository state: it renders as the page body from `main`.
+
+### Scorecard expectations
+
+Per version the directory reports: two Errors (description word, script element), a list of warnings, two
+behaviour Recommendations (vault enumeration, clipboard), and Passes for attestations, vault read/write,
+dependencies and a byte-for-byte build reproduction. The warnings that remain are deliberate and listed
+under Gates above; the two Recommendations need no action — a vault viewer must enumerate the vault, and
+the clipboard access is the copy button on a code block.
+
+### Mechanics
+
+1. `version` in `manifest.json`, the same key in `versions.json` mapped to `minAppVersion`, `package.json`
+   in step. The script does all three.
+2. Commit, tag, push; the Release workflow typechecks, lints, tests, builds with the production Worker,
+   refuses a development origin, and attaches `main.js`, `manifest.json`, `styles.css`.
+3. Never hand-edit or commit `main.js`; it is generated and gitignored.
+4. A source patch that arrives from another session may list a test file it does not contain — check the
+   test count against the brief, and read `test/build-and-test.mjs` before trusting it.
 
 ## Compatibility is a standing requirement
 
