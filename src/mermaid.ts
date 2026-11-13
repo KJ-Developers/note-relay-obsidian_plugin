@@ -19,8 +19,8 @@ type MermaidApi = {
   render(id: string, text: string): Promise<{ svg?: unknown }>;
 };
 
-/** How long to wait for Obsidian to finish loading its own Mermaid. */
-const LOAD_TIMEOUT_MS = 5_000;
+/** How long to wait for Obsidian to finish loading its own Mermaid. Short on purpose: see below. */
+const LOAD_TIMEOUT_MS = 1_500;
 /** A diagram that takes longer than this is not rendered: a preview must never hang on one fence. */
 const RENDER_TIMEOUT_MS = 5_000;
 
@@ -59,6 +59,16 @@ async function warmUpMermaid(app: App | undefined): Promise<void> {
   }
 }
 
+/**
+ * One attempt per session.
+ *
+ * Each preview asks for Mermaid, and a note can carry a dozen fences. Without this, a vault whose
+ * session has never loaded Mermaid paid the timeout once per fence — measured at 70 seconds for one
+ * note, which the browser reports as "Reading …" and never recovers from inside its 10-second read
+ * window. One attempt, one short wait, then every later preview answers immediately.
+ */
+let loadAttempted = false;
+
 async function ensureMermaid(app: App | undefined): Promise<MermaidApi | null> {
   const present = mermaidApi();
   if (present) {
@@ -68,7 +78,10 @@ async function ensureMermaid(app: App | undefined): Promise<MermaidApi | null> {
     configure(present);
     return present;
   }
-  await warmUpMermaid(app);
+  if (!loadAttempted) {
+    loadAttempted = true;
+    await warmUpMermaid(app);
+  }
   const loaded = mermaidApi();
   if (loaded) configure(loaded);
   return loaded;
