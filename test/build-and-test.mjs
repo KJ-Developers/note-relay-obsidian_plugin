@@ -9,7 +9,7 @@ import { spawnSync } from 'node:child_process';
 const entries = [
   'protocol', 'update-check', 'preview', 'host-boundary', 'framing', 'host-lifecycle', 'framed-channel',
   'peer-grant', 'authenticated-read-session', 'pairing-key', 'pairing-key-store', 'pairing-flow',
-  'host-presence-proof', 'search', 'transclusion', 'mermaid', 'reconnect', 'host-waiting',
+  'host-presence-proof', 'search', 'transclusion', 'mermaid', 'appearance-probe', 'reconnect', 'host-waiting',
   'host-socket', 'diagnostics', 'device-grant-client', 'account-binding', 'device-api',
   'device-identity', 'release-build-check',
 ];

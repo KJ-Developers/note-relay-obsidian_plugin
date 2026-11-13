@@ -306,10 +306,13 @@ export class ObsidianAdapter implements WritableVaultAdapter {
     const tokens: Record<string, string> = {};
     // Computed custom properties may still contain var() or hsl(); resolve each
     // through the browser's color parser, then serialize only literal colors.
-    const probe = activeDocument.createSpan({ cls: 'note-relay-color-probe' });
-    const sample = activeDocument.createSpan();
-    probe.appendChild(sample);
-    activeDocument.body.appendChild(probe);
+    // Build the probe on the body, not on the document: Obsidian 1.14.5's Document.createEl
+    // appends to the document node itself, which throws "Only one element on document allowed".
+    // That one throw became RENDER_FAILED for every vault — no theme, and the reader got an empty
+    // vault (measured 2026-11-13 against 1.14.5). Element-level helpers are unaffected.
+    const host = activeDocument.body;
+    const probe = host.createSpan({ cls: 'note-relay-color-probe' });
+    const sample = probe.createSpan();
     try {
       for (const name of appearanceColors) {
         const raw = styles.getPropertyValue(name);

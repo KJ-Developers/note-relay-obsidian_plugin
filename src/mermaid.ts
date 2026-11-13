@@ -48,7 +48,9 @@ async function ensureMermaid(): Promise<MermaidApi | null> {
     return present;
   }
   await new Promise<void>(resolve => {
-    const script = activeDocument.createEl('script');
+    // Same trap as the appearance probe: Document.createEl appends to the document node on
+    // Obsidian 1.14.5 and throws. Create the element and append it to head explicitly.
+    const script = activeDocument.createElement('script');
     script.src = MERMAID_SCRIPT;
     script.onload = () => resolve();
     script.onerror = () => resolve();

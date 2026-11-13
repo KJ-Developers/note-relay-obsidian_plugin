@@ -31,3 +31,18 @@ export async function requestUrl(request: { url: string }) {
   requestUrlState.calls.push(request.url);
   return { status: requestUrlState.response.status, text: requestUrlState.response.text };
 }
+
+/**
+ * `TFile`/`TFolder` as the adapter uses them: `instanceof` checks and path/extension reads. The
+ * adapter is exercised in jsdom for its appearance probe, and it imports both at module load.
+ */
+export class TAbstractFile {
+  path = '';
+}
+export class TFile extends TAbstractFile {
+  extension = 'md';
+  basename = '';
+}
+export class TFolder extends TAbstractFile {
+  children: unknown[] = [];
+}

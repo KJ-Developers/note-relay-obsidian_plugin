@@ -309,10 +309,15 @@ export async function dispatchVaultRequest(adapter: VaultAdapter, access: Access
   const permitted = isWrite ? writeFields[cmd as WriteCommand] :
     cmd === 'SEARCH_NOTES' ? ['version', 'id', 'cmd', 'query', 'limit'] :
     pathCommands.has(cmd) ? ['version', 'id', 'cmd', 'path'] :
-    cmd === 'LIST_VAULT_TREE_PAGE' || cmd === 'LIST_TAG_METADATA_PAGE' ? ['version', 'id', 'cmd', 'cursor'] : ['version', 'id', 'cmd'];
+    // `path` on the tree page is the folder whose children are wanted: '' is the vault root.
+    // Additive — an older browser sends no path and still gets the flat walk it expects.
+    cmd === 'LIST_VAULT_TREE_PAGE' ? ['version', 'id', 'cmd', 'cursor', 'path'] :
+    cmd === 'LIST_TAG_METADATA_PAGE' ? ['version', 'id', 'cmd', 'cursor'] : ['version', 'id', 'cmd'];
   if (Object.keys(obj).some(key => !permitted.includes(key))) return { ok: false, id, error: 'BAD_REQUEST' };
   if (pathCommands.has(cmd) && !(cmd === 'READ_RASTER' ? validVaultPath(obj.path) && !!rasterMime(obj.path) : validMarkdownPath(obj.path))) return { ok: false, id, error: 'FORBIDDEN' };
-  if (!isWrite && !pathCommands.has(cmd) && 'path' in obj) return { ok: false, id, error: 'BAD_REQUEST' };
+  if (!isWrite && !pathCommands.has(cmd) && cmd !== 'LIST_VAULT_TREE_PAGE' && 'path' in obj) {
+    return { ok: false, id: '', error: 'BAD_REQUEST' };
+  }
   if (cmd === 'SEARCH_NOTES') {
     if (typeof obj.query !== 'string' || parseQuery(obj.query) === null) return { ok: false, id, error: 'FORBIDDEN' };
     if (obj.limit !== undefined &&
@@ -335,6 +340,9 @@ export async function dispatchVaultRequest(adapter: VaultAdapter, access: Access
   }
   // Reads keep their original, tighter budget: nothing but paths, cursors and ids travel here.
   if (size > MAX_REQUEST_BYTES) return { ok: false, id, error: 'TOO_LARGE' };
+  if (cmd === 'LIST_VAULT_TREE_PAGE' && obj.path !== undefined && obj.path !== '' && !validVaultPath(obj.path)) {
+    return { ok: false, id, error: 'FORBIDDEN' };
+  }
   if ((cmd === 'LIST_VAULT_TREE_PAGE' || cmd === 'LIST_TAG_METADATA_PAGE') && obj.cursor !== undefined &&
     (typeof obj.cursor !== 'string' || !/^[a-f0-9]{32}:[1-9][0-9]{0,5}$/.test(obj.cursor))) {
     return { ok: false, id, error: 'BAD_REQUEST' };
@@ -382,13 +390,24 @@ export async function dispatchVaultRequest(adapter: VaultAdapter, access: Access
   }
   if (cmd === 'LIST_VAULT_TREE_PAGE') {
     let entries: { kind: 'file' | 'folder'; path: string }[];
+    // A folder-scoped page is one folder's children: the browser expands a folder and asks for
+    // what is under it, instead of walking the whole vault to reach it. On an 18,490-note vault the
+    // flat walk is ~93 round trips and re-hashes the entire listing on every one of them.
+    const folder = obj.path as string | undefined;
+    const parentOf = (path: string) => path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : '';
     try {
       entries = [
-        ...adapter.listMarkdown().filter(file => validMarkdownPath(file.path)).map(file => ({ kind: 'file' as const, path: file.path })),
-        ...adapter.listFolders().filter(validVaultPath).map(path => ({ kind: 'folder' as const, path })),
+        ...adapter.listMarkdown().filter(file => validMarkdownPath(file.path))
+          .filter(file => folder === undefined || parentOf(file.path) === folder)
+          .map(file => ({ kind: 'file' as const, path: file.path })),
+        ...adapter.listFolders().filter(validVaultPath)
+          .filter(path => folder === undefined || parentOf(path) === folder)
+          .map(path => ({ kind: 'folder' as const, path })),
       ].sort((a, b) => a.path < b.path ? -1 : a.path > b.path ? 1 : a.kind < b.kind ? -1 : a.kind > b.kind ? 1 : 0);
     } catch { return { ok: false, id, error: 'RENDER_FAILED' }; }
     if (entries.length > MAX_TREE_ENTRIES) return { ok: false, id, error: 'TOO_LARGE' };
+    // A folder page answers with a digest of that folder's own entries, so its cursor is cheap to
+    // build and still detects a vault that changed between pages.
     const encoded = new TextEncoder().encode(JSON.stringify(entries));
     if (encoded.byteLength > MAX_TREE_SNAPSHOT_BYTES) return { ok: false, id, error: 'TOO_LARGE' };
     let digest: ArrayBuffer;

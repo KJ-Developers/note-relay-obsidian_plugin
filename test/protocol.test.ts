@@ -86,6 +86,40 @@ test('tree pages include empty folders and reject a changed inventory', async ()
     { ok: false, id: 'test-1', error: 'BAD_REQUEST' });
 });
 
+test('a folder page answers with that folder\'s own children, and nothing else', async () => {
+  // Expanding one folder must cost one request. Without this the browser walks a flat listing
+  // (~93 pages on an 18,490-note vault) to reach a folder that sorts late.
+  const tree: VaultAdapter = { ...adapter,
+    listMarkdown: () => [
+      { path: 'Root.md', extension: 'md' },
+      { path: 'Projects/Plan.md', extension: 'md' },
+      { path: 'Projects/Deep/Note.md', extension: 'md' },
+      { path: 'Journal/2026.md', extension: 'md' },
+    ],
+    listFolders: () => ['Projects', 'Projects/Deep', 'Journal', 'Empty'] };
+
+  const root = await dispatchReadOnly(tree, true, { ...req('LIST_VAULT_TREE_PAGE'), path: '' });
+  assert.equal(root.ok, true);
+  if (root.ok) assert.deepEqual((root.data as { entries: unknown[] }).entries, [
+    { kind: 'folder', path: 'Empty' }, { kind: 'folder', path: 'Journal' },
+    { kind: 'folder', path: 'Projects' }, { kind: 'file', path: 'Root.md' }]);
+
+  const projects = await dispatchReadOnly(tree, true, { ...req('LIST_VAULT_TREE_PAGE'), path: 'Projects' });
+  assert.equal(projects.ok, true);
+  if (projects.ok) assert.deepEqual(projects.data, {
+    entries: [{ kind: 'folder', path: 'Projects/Deep' }, { kind: 'file', path: 'Projects/Plan.md' }],
+    nextCursor: null });
+
+  // A folder nobody has is an empty page, not an error: the vault may have changed under the reader.
+  const missing = await dispatchReadOnly(tree, true, { ...req('LIST_VAULT_TREE_PAGE'), path: 'Gone' });
+  if (missing.ok) assert.deepEqual(missing.data, { entries: [], nextCursor: null });
+  // Path traversal and absolute paths are refused before any vault work.
+  assert.deepEqual(await dispatchReadOnly(tree, true, { ...req('LIST_VAULT_TREE_PAGE'), path: '../etc' }),
+    { ok: false, id: 'test-1', error: 'FORBIDDEN' });
+  assert.deepEqual(await dispatchReadOnly(tree, true, { ...req('LIST_VAULT_TREE_PAGE'), path: '/etc' }),
+    { ok: false, id: 'test-1', error: 'FORBIDDEN' });
+});
+
 test('empty tree returns one empty page', async () => {
   const empty: VaultAdapter = { ...adapter, listMarkdown: () => [], listFolders: () => [] };
   assert.deepEqual(await dispatchReadOnly(empty, true, req('LIST_VAULT_TREE_PAGE')),
