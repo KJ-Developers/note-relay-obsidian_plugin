@@ -43,16 +43,15 @@ These are stated up front because the plugin needs all three to be useful.
 
 ## Install
 
-Note Relay is not yet listed in the Obsidian community directory. Until it is, install it by hand:
+1. In Obsidian, open **Settings → Community plugins → Browse** and search for **Note Relay**.
+2. Select **Install**, then **Enable**.
 
-1. Download the latest plugin archive from [noterelay.io](https://noterelay.io) — or take `main.js` and
-   `manifest.json` from this repository's latest release.
-2. In Obsidian, open **Settings → Community plugins** and select **Open plugins folder**. That button opens
-   the folder for the current vault, so you do not have to find `.obsidian` yourself.
-3. Create a folder named `note-relay` inside it and put `main.js` and `manifest.json` in that folder.
-4. Back in Obsidian, reload the plugin list and enable **Note Relay**.
+Manual install, for a build that has not been released yet: download the archive from
+[noterelay.io](https://noterelay.io), or take `main.js`, `manifest.json` and `styles.css` from the latest
+release, and put them in `.obsidian/plugins/note-relay/`. **Settings → Community plugins → Open plugins
+folder** opens that folder for the current vault, so you do not have to find `.obsidian` yourself.
 
-If an older `note-relay` folder is already there, delete it first and then unzip; on macOS, Finder refuses to
+If an older `note-relay` folder is already there, delete it before unzipping; on macOS, Finder refuses to
 replace a folder inside `.obsidian` with "can't be replaced because it is invisible".
 
 The plugin starts with hosting off. Nothing is opened until you turn on **Host this vault** and pair it.
@@ -86,23 +85,11 @@ itself keeps.
 Open an issue on this repository, or email [support@noterelay.io](mailto:support@noterelay.io) if the report
 involves vault content or credentials — please do not paste note text into a public issue.
 
-## Development
+## Building from source
 
-Node 22+ and pnpm.
-
-```bash
-pnpm install --frozen-lockfile
-pnpm exec tsc --noEmit
-pnpm lint        # Obsidian's own developer-guideline rules, the same set the directory scores
-pnpm test        # unit tests, no network
-pnpm build       # writes main.js, compiled against https://api.noterelay.io
-```
-
-`pnpm build` compiles the Worker origin into the bundle and defaults to the production origin, so a clean
-checkout builds with no environment at all — which is what the community directory's build verifier does. Set
-`NR_WORKER_ORIGIN` to build against a development Worker, and run `node scripts/check-release-build.mjs`
-afterwards: it refuses a bundle that names a development endpoint. `pnpm test` runs the pure protocol, framing,
-adapter-boundary, preview, search and reconnect suites against fakes; it does not replace testing in a real vault.
+Node 22+ and pnpm: `pnpm install --frozen-lockfile`, then `pnpm exec tsc --noEmit`, `pnpm lint`, `pnpm test`,
+`pnpm build`. Build, release and contribution details are in [DEVELOPMENT.md](DEVELOPMENT.md); the working
+agreements are in [AGENTS.md](AGENTS.md).
 
 ## License
 
