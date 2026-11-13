@@ -8,6 +8,8 @@ only when a direct connection cannot be established. Markdown, rendered Dataview
 over that channel — the Note Relay service stores account, host, pairing and authorization records, not note
 bodies.
 
+<img src="images/viewer.jpg" width="730" alt="The Note Relay viewer: the vault tree on the left, the notes list beside it, a note with a host-rendered Dataview table in the middle, and backlinks below.">
+
 ## Why this exists
 
 Obsidian has no web app. The usual answer is to export notes into a published site, which leaves behind what the
@@ -21,17 +23,16 @@ account, pairing and authorization records rather than note bodies.
 
 **Note Relay is in private beta.** Accounts are invite-only — request access at [noterelay.io](https://noterelay.io).
 
-## Disclosures
+## Foundational guarantees
 
-- **An account is required.** Reading or editing a vault from a browser both go through a Note Relay account.
-  You sign in at [noterelay.io](https://noterelay.io), pair this vault with your account, and approve the
-  pairing in the browser with the host key fingerprint the plugin shows you. Hosting starts off: nothing is
-  opened until you turn it on.
-- **Payment is required for editing.** Reading your own vault from a browser is free. Saving, creating,
-  renaming, moving and deleting notes requires a paid Note Relay subscription. Current plans and prices are on
-  [noterelay.io](https://noterelay.io); this repository does not state prices. During the beta, accounts are
-  invite-only — request access on the site.
-- **Network use.** See [Network use](#network-use) below for what the plugin contacts and why.
+<img src="images/guarantees.jpg" width="730" alt="Three cards: nothing uploaded, an end-to-end encrypted WebRTC data channel, and your vault's own theme, backlinks, tags and Dataview results.">
+
+| Nothing uploaded — your vault stays yours | End-to-end encrypted channel | Your vault does the rendering |
+| --- | --- | --- |
+| Data stays on your computer's filesystem. There is no secondary database, no synced bucket and no central backup. | Keys are negotiated between the browser and the vault. A relay only ever carries packets it cannot read. | Dataview, maths, Mermaid and your theme are computed by Obsidian. The browser receives finished, sanitised output. |
+
+**Reading is free. Editing is the paid part.** A vault you have paired is yours to read for as long as you
+want, at no cost. Writing to it is what the paid plan buys.
 
 ## What it does
 
@@ -47,10 +48,58 @@ account, pairing and authorization records rather than note bodies.
   carries the content hash it was based on, so an edit made in Obsidian in the meantime is reported as a
   conflict instead of being overwritten.
 
+## How it works
+
+1. **Install the plugin** — Settings → Community plugins → Browse, search for Note Relay, then Install.
+2. **Pair the vault** — approve the same fingerprint on the vault and in the browser. From then on the browser
+   may ask that vault for notes, and nothing else.
+3. **Open a browser anywhere** — your vault appears as a folder tree, and reading behaves like Obsidian.
+
+> The vault has to be awake and hosting. If your computer is asleep or the plugin is off, the browser cannot
+> reach it. That is a real limitation of how this works, not a bug we are pretending away.
+
+## Security: the path a note takes
+
+1. Your browser connects to your vault on the strength of a short-lived signed grant. The grant names the
+   vault and nothing else — not a note, not a path.
+2. You click a note. That request travels over the channel to the plugin, so the note you opened is never
+   named to us.
+3. The plugin reads the note from your own disk and renders it on your own machine.
+4. The result comes back over the same encrypted channel. Nothing is written to a server on the way.
+
+> **After step 1, we are out of the picture.** All we do is establish the connection: introduce your browser
+> to your vault, then get out of the way. Nothing is stored for us to lose, and nothing to hand over if we were
+> asked. That is also why your vault has to be awake — there is no copy of it anywhere else to fall back on.
+
+## Free to read, paid to edit
+
+| Free | Base |
+| --- | --- |
+| Read any paired vault from any browser | Everything in Free |
+| Folders, tags, backlinks and the local graph | Edit notes: create, rename, move, delete, save |
+| Dataview, properties, callouts, code with a copy button | Tick checkboxes and edit properties |
+| Reading stays free | Conflicts refused, never merged |
+
+Editing is the paid plan. There is no charge for reading, and no card is required for it. Current plans and
+prices are on [noterelay.io](https://noterelay.io) — this repository does not state prices.
+
+## Disclosures
+
+- **An account is required.** Reading or editing a vault from a browser both go through a Note Relay account.
+  You sign in at [noterelay.io](https://noterelay.io), pair this vault with your account, and approve the
+  pairing in the browser with the host key fingerprint the plugin shows you. Hosting starts off: nothing is
+  opened until you turn it on.
+- **Payment is required for editing.** Reading your own vault from a browser is free. Saving, creating,
+  renaming, moving and deleting notes requires a paid Note Relay subscription. Current plans and prices are on
+  [noterelay.io](https://noterelay.io); this repository does not state prices. During the beta, accounts are
+  invite-only — request access on the site.
+- **Network use.** See [Network use](#network-use) below for what the plugin contacts and why.
+
 ## Requirements
 
 - Obsidian 1.10.0 or later, desktop only (Windows, macOS, Linux).
 - A Note Relay account.
+- The computer holding the vault awake and hosting while you read it.
 
 ## Install
 
@@ -81,6 +130,8 @@ itself keeps.
 - Arbitrary vault CSS is not loaded; only validated theme tokens are sent.
 - The local graph is a one-hop slice around the open note, not the full vault graph.
 - Search covers note text on the host; attachments and PDFs are not searched.
+- One reader per vault at a time: a second device is offered a deliberate takeover rather than a silent
+  conflict.
 
 ## Report a problem
 
