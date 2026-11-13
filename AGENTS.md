@@ -83,6 +83,20 @@ dependencies and a byte-for-byte build reproduction. The warnings that remain ar
 under Gates above; the two Recommendations need no action — a vault viewer must enumerate the vault, and
 the clipboard access is the copy button on a code block.
 
+### How the page renders the README
+
+- **A single newline is kept.** The directory renders the README with hard breaks, so prose wrapped for a
+  100-character file shows a break mid-sentence on the page ("encrypted relay used / only when a direct
+  connection cannot be established"). Write one line per paragraph, list item and blockquote line; the file
+  reads wide in an editor and correct on the page. Do not reflow it back.
+- **An image needs a caption line, and must not sit above its own text.** The one place this broke: a
+  screenshot of the site's guarantee cards directly above the table that says the same thing. Keep the
+  words, drop the picture of them; a screenshot is for something the text cannot show (the viewer), and it
+  carries an italic caption line beneath it.
+- **The subtitle under the title is dashboard text, not README text.** It still read "Read and edit an
+  Obsidian vault from a browser…" — an old description containing the banned word — while the README below
+  it was compliant. Both surfaces are validated; fix them together.
+
 ### Mechanics
 
 1. `version` in `manifest.json`, the same key in `versions.json` mapped to `minAppVersion`, `package.json`
