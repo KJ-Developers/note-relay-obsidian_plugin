@@ -44,7 +44,7 @@ export async function sendFramedReply(
   channel: WritableChannel, reply: Reply, allowed: () => boolean,
   current: () => boolean, signal: AbortSignal,
 ): Promise<void> {
-  const frames = frameReply(reply);
+  const frames = await frameReply(reply);
   for (const frame of frames) {
     if (signal.aborted || !current() || !allowed() || channel.readyState !== 'open') throw new Error('Peer no longer authorized');
     await waitForSpace(channel, signal);

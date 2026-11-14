@@ -3,7 +3,7 @@ import { MAX_SEARCH_RESULTS, MAX_SNIPPET_LENGTH, parseQuery } from './search';
 import type { SearchReport } from './search';
 import { hasControlCharacter, hasControlCharacterOtherThanLineWhitespace } from './characters';
 
-export const PROTOCOL_VERSION = 1;
+export const PROTOCOL_VERSION = 2;
 export const MAX_REQUEST_BYTES = 16 * 1024;
 export const MAX_NOTE_BYTES = 1024 * 1024;
 /**

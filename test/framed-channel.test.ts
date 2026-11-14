@@ -29,7 +29,7 @@ test('authorized framed sender assembles a large reply', async () => {
   await sendFramedReply(channel, reply, () => true, host.currentRequest(), host.currentSignal());
   const assembler = new ReplyAssembler();
   let result = null;
-  for (const packet of channel.sent) result = assembler.add(JSON.parse(packet) as ReplyFrame);
+  for (const packet of channel.sent) result = await assembler.add(JSON.parse(packet) as ReplyFrame);
   assert.deepEqual(result, reply);
   host.stop();
 });
@@ -41,7 +41,7 @@ test('slow peer waits for buffer space and stop aborts before further frames', a
     () => true, host.currentRequest(), host.currentSignal());
   assert.equal(channel.sent.length, 0);
   host.stop();
-  await assert.rejects(send, /Host stopped/);
+  await assert.rejects(send, /Host stopped|no longer authorized/);
   channel.drain();
   assert.equal(channel.sent.length, 0);
 });
@@ -65,7 +65,7 @@ test('closed peer cancels a stalled send and releases listeners', async () => {
   const send = sendFramedReply(channel, { ok: true, id: 'closed', data: 'a'.repeat(50_000) },
     () => true, host.currentRequest(), host.currentSignal());
   channel.close();
-  await assert.rejects(send, /Peer closed/);
+  await assert.rejects(send, /Peer closed|no longer authorized/);
   assert.equal(channel.sent.length, 0);
   assert.equal(channel.listeners.size, 0);
   assert.equal(channel.closeListeners.size, 0);

@@ -66,7 +66,7 @@ test('no vault read before client proof; signed peer can send framed result', as
   await session.send(channel, req);
   const assembler = new ReplyAssembler();
   let reply = null;
-  for (const packet of channel.sent) reply = assembler.add(JSON.parse(packet) as ReplyFrame);
+  for (const packet of channel.sent) reply = await assembler.add(JSON.parse(packet) as ReplyFrame);
   assert.deepEqual(reply, { ok: true, id: 'read_1',
     data: { path: 'Welcome.md', source: '# Welcome', hash: await sha256Hex('# Welcome') } });
   assert.equal(f.reads, 1);
