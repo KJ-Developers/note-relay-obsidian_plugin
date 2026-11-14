@@ -46,8 +46,8 @@ test('rejects traversal, encoded separators, hidden internals, and malformed req
     const reply = await dispatchReadOnly(adapter, true, req('READ_MARKDOWN', path));
     assert.equal(reply.ok, false, path);
   }
-  // 1 and 2 are both spoken (2 adds compressed replies); anything else is refused.
-  assert.equal((await dispatchReadOnly(adapter, true, { version: 3, id: 'x', cmd: 'LIST_MARKDOWN' })).ok, false);
+  // 1, 2 and 3 are all spoken (2 adds gzip, 3 adds binary frames); anything else is refused.
+  assert.equal((await dispatchReadOnly(adapter, true, { version: 4, id: 'x', cmd: 'LIST_MARKDOWN' })).ok, false);
   assert.equal((await dispatchReadOnly(adapter, true, { version: 1, id: 'x', cmd: 'LIST_MARKDOWN' })).ok, true);
   assert.equal((await dispatchReadOnly(adapter, true, { version: 2, id: 'x', cmd: 'LIST_MARKDOWN' })).ok, true);
   assert.equal((await dispatchReadOnly(adapter, true, { version: 1, id: 'x', cmd: 'READ_MARKDOWN', path: 'a'.repeat(20_000) })).ok, false);

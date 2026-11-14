@@ -1,5 +1,5 @@
 import type { WritableChannel } from './framed-channel';
-import { sendFramedReply } from './framed-channel';
+import { sendBinaryReply, sendFramedReply } from './framed-channel';
 import { HostLifecycle } from './host-lifecycle';
 import { acceptClientProof, newHostChallenge, verifyPeerGrant,
   type ExpectedGrant, type PeerGrant } from './peer-grant';
@@ -79,7 +79,30 @@ export class AuthenticatedReadSession {
     // bytes it expects. The version is the capability signal, so no extra handshake is carried.
     const version = (input as { version?: unknown } | null)?.version;
     const compress = typeof version === 'number' && version >= 2;
+    // Version 3 clients can read binary frames, so an image does not pay base64's 33%.
+    if (typeof version === 'number' && version >= 3) {
+      const bytes = rasterBytes(reply);
+      if (bytes) {
+        await sendBinaryReply(channel, reply, bytes, () => this.authorized(), this.currentHost,
+          this.hostSignal);
+        return;
+      }
+    }
     await sendFramedReply(channel, reply, () => this.authorized(), this.currentHost,
       this.hostSignal, compress);
   }
+}
+
+
+/** The bytes of a raster reply, or null when this reply is text. */
+function rasterBytes(reply: Reply): Uint8Array | null {
+  if (!reply.ok) return null;
+  const data = (reply as { data?: { base64?: unknown; mime?: unknown } }).data;
+  if (!data || typeof data.base64 !== 'string' || typeof data.mime !== 'string') return null;
+  try {
+    const binary = atob(data.base64);
+    const bytes = new Uint8Array(binary.length);
+    for (let index = 0; index < binary.length; index++) bytes[index] = binary.charCodeAt(index);
+    return bytes;
+  } catch { return null; }
 }

@@ -3,15 +3,15 @@ import { MAX_SEARCH_RESULTS, MAX_SNIPPET_LENGTH, parseQuery } from './search';
 import type { SearchReport } from './search';
 import { hasControlCharacter, hasControlCharacterOtherThanLineWhitespace } from './characters';
 
-export const PROTOCOL_VERSION = 2;
+export const PROTOCOL_VERSION = 3;
 /**
  * Versions this build answers.
  *
- * 1 is the uncompressed framing; 2 is the same protocol with gzipped replies. Accepting both is what
- * lets an older browser work against this plugin, and it doubles as the capability signal: the reply is
- * only compressed when the request asked with a version that understands it.
+ * 1 is the uncompressed framing; 2 adds gzipped replies; 3 adds binary frames for image payloads.
+ * Accepting all three is what lets an older browser work against this plugin, and the version doubles as
+ * the capability signal: a reply only uses what the request said it understands.
  */
-export const SUPPORTED_VERSIONS = new Set([1, 2]);
+export const SUPPORTED_VERSIONS = new Set([1, 2, 3]);
 export const MAX_REQUEST_BYTES = 16 * 1024;
 export const MAX_NOTE_BYTES = 1024 * 1024;
 /**
