@@ -201,21 +201,38 @@ test('local graph includes only resolved visible direct neighbors within limits'
     backlinks: () => ['Links/Incoming.md', '.hidden.md', 'Missing.md'],
     outgoing: () => ['Links/Outgoing.md', 'Links/Incoming.md', '../escape.md'],
   };
-  assert.deepEqual(await dispatchReadOnly(graph, true, req('GET_LOCAL_GRAPH', 'Welcome.md')),
-    { ok: true, id: 'test-1', data: {
-      center: 'Welcome.md', nodes: ['Welcome.md', 'Links/Incoming.md', 'Links/Outgoing.md'],
-      edges: [
-        { from: 'Links/Incoming.md', to: 'Welcome.md' },
-        { from: 'Welcome.md', to: 'Links/Incoming.md' },
-        { from: 'Welcome.md', to: 'Links/Outgoing.md' },
-      ],
-    } });
+  const small = await dispatchReadOnly(graph, true, req('GET_LOCAL_GRAPH', 'Welcome.md'));
+  assert.equal(small.ok, true);
+  if (small.ok) {
+    const data = small.data as { center: string; nodes: string[]; edges: unknown[]; omitted?: number };
+    assert.equal(data.center, 'Welcome.md');
+    assert.deepEqual([...data.nodes].sort(),
+      ['Links/Incoming.md', 'Links/Outgoing.md', 'Welcome.md']);
+    assert.deepEqual(data.edges, [
+      { from: 'Links/Incoming.md', to: 'Welcome.md' },
+      { from: 'Welcome.md', to: 'Links/Incoming.md' },
+      { from: 'Welcome.md', to: 'Links/Outgoing.md' },
+    ]);
+    assert.equal(data.omitted, 0);
+  }
+  // A hub note with more connections than the panel can draw keeps the graph and reports the rest,
+  // instead of refusing at exactly the note where a graph is most useful.
   const excessive: VaultAdapter = { ...graph,
     getFile: path => ({ path, extension: 'md' }),
-    outgoing: () => Array.from({ length: 101 }, (_, n) => `Links/${n}.md`),
+    outgoing: () => Array.from({ length: 150 }, (_, n) => `Links/${n}.md`),
+    linkCounts: paths => Object.fromEntries(paths.map((path, index) => [path, paths.length - index])),
   };
-  assert.deepEqual(await dispatchReadOnly(excessive, true, req('GET_LOCAL_GRAPH', 'Welcome.md')),
-    { ok: false, id: 'test-1', error: 'TOO_LARGE' });
+  const hub = await dispatchReadOnly(excessive, true, req('GET_LOCAL_GRAPH', 'Welcome.md'));
+  assert.equal(hub.ok, true);
+  if (hub.ok) {
+    const data = hub.data as { nodes: string[]; omitted?: number; degree?: Record<string, number> };
+    assert.equal(data.nodes.length, 101);
+    // 150 outgoing plus two visible backlinks (Incoming and Missing both resolve) is 152; the panel
+    // keeps the hundred most connected and says so.
+    assert.equal(data.omitted, 52);
+    // The fake counts every path it is given, so the centre's degree is the whole node set.
+    assert.equal(data.degree?.['Welcome.md'], data.nodes.length + (data.omitted ?? 0));
+  }
   assert.deepEqual(await dispatchReadOnly(graph, true, req('GET_LOCAL_GRAPH', '../Welcome.md')),
     { ok: false, id: 'test-1', error: 'FORBIDDEN' });
 });
@@ -843,4 +860,52 @@ test('a guest write grant may edit, and a read grant still may not', async () =>
   assert.equal((await dispatchVaultRequest(vault, { enabled: true, scope: 'write' }, save)).ok, true);
   assert.deepEqual(await dispatchVaultRequest(vault, { enabled: true, scope: 'read' }, save),
     { ok: false, id: 'test-1', error: 'FORBIDDEN' });
+});
+
+test('the tag index comes from the vault in one reply, not a walk over every note', async () => {
+  // Obsidian maintains this index itself; the per-note walk answers the same question after ninety
+  // round trips on an 18,000-note vault, which is what the reader saw as "1 note loaded".
+  const host: VaultAdapter = {
+    ...adapter,
+    tagIndex: () => [{ tag: '#area/work', count: 412 }, { tag: 'project/notes', count: 7 }],
+    notesWithTag: tag => tag === 'area/work' ? ['Welcome.md'] : [],
+  };
+  const index = await dispatchReadOnly(host, true, req('GET_TAG_INDEX'));
+  assert.equal(index.ok, true);
+  if (index.ok) {
+    assert.deepEqual((index.data as { tags: unknown[]; total: number }).tags,
+      [{ tag: 'area/work', count: 412 }, { tag: 'project/notes', count: 7 }]);
+    assert.equal((index.data as { total: number }).total, 2);
+  }
+  const notes = await dispatchReadOnly(host, true, req('GET_NOTES_WITH_TAG', '#area/work'));
+  assert.equal(notes.ok, true);
+  if (notes.ok) {
+    assert.deepEqual(notes.data, { tag: 'area/work', paths: ['Welcome.md'], total: 1 });
+  }
+  // A tag is not a path: the request must not be read as one.
+  assert.deepEqual(await dispatchReadOnly(host, true, req('GET_NOTES_WITH_TAG', '.obsidian/Secret.md')),
+    { ok: true, id: 'test-1', data: { tag: '.obsidian/Secret.md', paths: [], total: 0 } });
+});
+
+test('a host without the index says BAD_REQUEST so the browser can fall back', async () => {
+  assert.deepEqual(await dispatchReadOnly(adapter, true, req('GET_TAG_INDEX')),
+    { ok: false, id: 'test-1', error: 'BAD_REQUEST' });
+  assert.deepEqual(await dispatchReadOnly(adapter, true, req('GET_NOTES_WITH_TAG', 'area/work')),
+    { ok: false, id: 'test-1', error: 'BAD_REQUEST' });
+});
+
+test('a folder page carries each note\'s tags, so membership arrives with the tree', async () => {
+  const host: VaultAdapter = {
+    ...adapter,
+    tagIndex: () => [{ tag: 'area/work', count: 1 }],
+    listMarkdown: () => [{ path: 'Notes/000.md', extension: 'md' }],
+    tags: file => file.path === 'Notes/000.md' ? ['#area/work', 'area/work', '#nested/tag'] : [],
+  };
+  const page = await dispatchReadOnly(host, true, req('LIST_VAULT_TREE_PAGE', ''));
+  assert.equal(page.ok, true);
+  if (page.ok) {
+    const entries = (page.data as { entries: Array<{ kind: string }> }).entries;
+    assert.deepEqual(entries.filter(entry => entry.kind === 'file'),
+      [{ kind: 'file', path: 'Notes/000.md', tags: ['area/work', 'nested/tag'] }]);
+  }
 });

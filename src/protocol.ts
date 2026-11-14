@@ -40,6 +40,11 @@ export const MAX_BACKLINKS = 500;
 export const MAX_GRAPH_NEIGHBORS = 100;
 export const MAX_TREE_ENTRIES = 20_000;
 export const MAX_TREE_SNAPSHOT_BYTES = 4 * 1024 * 1024;
+export const MAX_TAG_INDEX = 20_000;
+export const MAX_TREE_TAGS_PER_FILE = 20;
+/** Paths per GET_PATHS page: 200 keeps a page near 13 KB, so the whole list is a handful of frames. */
+export const PATHS_PAGE_SIZE = 200;
+export const MAX_NOTES_WITH_TAG = 5_000;
 export const MAX_PROPERTIES = 64;
 export const MAX_PROPERTY_KEY = 128;
 export const MAX_PROPERTY_VALUES = 32;
@@ -50,7 +55,10 @@ export type PropertyKind = 'text' | 'number' | 'boolean' | 'date' | 'list';
 /** One frontmatter entry, already flattened to display strings by the host. */
 export type PropertyEntry = { key: string; kind: PropertyKind; values: string[] };
 
-export type ReadCommand = 'LIST_MARKDOWN' | 'LIST_VAULT_TREE' | 'LIST_VAULT_TREE_PAGE' | 'LIST_TAG_METADATA_PAGE' | 'GET_BACKLINKS' | 'GET_LOCAL_GRAPH' | 'GET_PROPERTIES' | 'READ_MARKDOWN' | 'READ_RASTER' | 'RENDER_PREVIEW' | 'GET_APPEARANCE' | 'SEARCH_NOTES';
+export type ReadCommand = 'LIST_MARKDOWN' | 'LIST_VAULT_TREE' | 'LIST_VAULT_TREE_PAGE' | 'LIST_TAG_METADATA_PAGE' | 'GET_TAG_INDEX' | 'GET_NOTES_WITH_TAG' | 'GET_FOLDER_TREE' | 'GET_PATHS' | 'GET_BACKLINKS' | 'GET_LOCAL_GRAPH' | 'GET_PROPERTIES' | 'READ_MARKDOWN' | 'READ_RASTER' | 'RENDER_PREVIEW' | 'GET_APPEARANCE' | 'SEARCH_NOTES';
+
+/** One row of the vault's own tag index, as Obsidian already keeps it. */
+export type TagCount = { tag: string; count: number };
 /**
  * Owner-write commands. They are deliberately a separate, closed set: adding one here is the
  * only way to widen what a paired browser can change, and every one of them requires an
@@ -77,6 +85,22 @@ export interface VaultAdapter {
   listMarkdown(): FileRef[];
   listFolders(): string[];
   tags(file: FileRef): string[];
+  /**
+   * The vault's own tag index — `metadataCache.getTags()` — which Obsidian maintains continuously.
+   * Optional: a host without it answers BAD_REQUEST and the browser falls back to the paged walk.
+   */
+  tagIndex?(): TagCount[];
+  /** Every note carrying one tag, from the same index. Optional for the same reason. */
+  notesWithTag?(tag: string): string[];
+  /**
+   * The folder skeleton: every folder and how many notes sit directly in it. One reply instead of a
+   * request per folder, which is what made a deep tree reveal itself one click at a time.
+   */
+  folderTree?(): Array<{ path: string; count: number }>;
+  /** Title (frontmatter, else filename) and modification time, for display and sorting. */
+  fileMeta?(file: FileRef): { title?: string; mtime?: number };
+  /** In-degree plus out-degree for a set of notes, in one pass over the link map. */
+  linkCounts?(paths: string[]): Record<string, number>;
   backlinks(file: FileRef): string[];
   outgoing(file: FileRef): string[];
   getFile(path: string): FileRef | null;
@@ -117,7 +141,7 @@ export type Reply =
 /** Host-side capability gate: is the host serving, and what may this peer change? */
 export type Access = { enabled: boolean | (() => boolean); scope: AccessScope };
 
-const readCommands = new Set<ReadCommand>(['LIST_MARKDOWN', 'LIST_VAULT_TREE', 'LIST_VAULT_TREE_PAGE', 'LIST_TAG_METADATA_PAGE', 'GET_BACKLINKS', 'GET_LOCAL_GRAPH', 'GET_PROPERTIES', 'READ_MARKDOWN', 'READ_RASTER', 'RENDER_PREVIEW', 'GET_APPEARANCE', 'SEARCH_NOTES']);
+const readCommands = new Set<ReadCommand>(['LIST_MARKDOWN', 'LIST_VAULT_TREE', 'LIST_VAULT_TREE_PAGE', 'LIST_TAG_METADATA_PAGE', 'GET_TAG_INDEX', 'GET_NOTES_WITH_TAG', 'GET_FOLDER_TREE', 'GET_PATHS', 'GET_BACKLINKS', 'GET_LOCAL_GRAPH', 'GET_PROPERTIES', 'READ_MARKDOWN', 'READ_RASTER', 'RENDER_PREVIEW', 'GET_APPEARANCE', 'SEARCH_NOTES']);
 const writeCommands = new Set<WriteCommand>(['SAVE_NOTE', 'CREATE_NOTE', 'RENAME_NOTE', 'MOVE_NOTE', 'DELETE_NOTE']);
 const commands = new Set<Command>([...readCommands, ...writeCommands]);
 const pathCommands = new Set<Command>(['GET_BACKLINKS', 'GET_LOCAL_GRAPH', 'GET_PROPERTIES', 'READ_MARKDOWN', 'READ_RASTER', 'RENDER_PREVIEW']);
@@ -312,11 +336,17 @@ export async function dispatchVaultRequest(adapter: VaultAdapter, access: Access
     // `path` on the tree page is the folder whose children are wanted: '' is the vault root.
     // Additive — an older browser sends no path and still gets the flat walk it expects.
     cmd === 'LIST_VAULT_TREE_PAGE' ? ['version', 'id', 'cmd', 'cursor', 'path'] :
-    cmd === 'LIST_TAG_METADATA_PAGE' ? ['version', 'id', 'cmd', 'cursor'] : ['version', 'id', 'cmd'];
+    cmd === 'LIST_TAG_METADATA_PAGE' ? ['version', 'id', 'cmd', 'cursor'] :
+    cmd === 'GET_NOTES_WITH_TAG' ? ['version', 'id', 'cmd', 'path'] :
+    cmd === 'GET_PATHS' ? ['version', 'id', 'cmd', 'cursor'] : ['version', 'id', 'cmd'];
   if (Object.keys(obj).some(key => !permitted.includes(key))) return { ok: false, id, error: 'BAD_REQUEST' };
   if (pathCommands.has(cmd) && !(cmd === 'READ_RASTER' ? validVaultPath(obj.path) && !!rasterMime(obj.path) : validMarkdownPath(obj.path))) return { ok: false, id, error: 'FORBIDDEN' };
-  if (!isWrite && !pathCommands.has(cmd) && cmd !== 'LIST_VAULT_TREE_PAGE' && 'path' in obj) {
-    return { ok: false, id: '', error: 'BAD_REQUEST' };
+  // `path` is a folder on the tree page and a tag on GET_NOTES_WITH_TAG; it is a path everywhere else.
+  if (!isWrite && !pathCommands.has(cmd) && cmd !== 'LIST_VAULT_TREE_PAGE' &&
+      cmd !== 'GET_NOTES_WITH_TAG' && 'path' in obj) {
+    // The id rides back even on a refusal: without it the browser cannot match the reply to its
+    // request and waits for the ten-second timeout instead of failing at once.
+    return { ok: false, id, error: 'BAD_REQUEST' };
   }
   if (cmd === 'SEARCH_NOTES') {
     if (typeof obj.query !== 'string' || parseQuery(obj.query) === null) return { ok: false, id, error: 'FORBIDDEN' };
@@ -388,6 +418,77 @@ export async function dispatchVaultRequest(adapter: VaultAdapter, access: Access
     if (files.length > 5000 || folders.length > 5000 || byteLength(JSON.stringify({ files, folders })) > MAX_PREVIEW_BYTES) return { ok: false, id, error: 'TOO_LARGE' };
     return { ok: true, id, data: { files, folders } };
   }
+  if (cmd === 'GET_TAG_INDEX') {
+    // Obsidian keeps a tag index of the whole vault in memory; reading it is a map copy, not a walk.
+    // The per-note scan this replaces answers the same question after ninety round trips.
+    if (!adapter.tagIndex) return { ok: false, id, error: 'BAD_REQUEST' };
+    let tags: TagCount[];
+    try { tags = adapter.tagIndex(); } catch { return { ok: false, id, error: 'RENDER_FAILED' }; }
+    const clean = tags
+      .filter(entry => entry && typeof entry.tag === 'string' && entry.tag.length > 0 && entry.tag.length <= 128 &&
+        typeof entry.count === 'number' && Number.isFinite(entry.count) && entry.count >= 0)
+      .map(entry => ({ tag: entry.tag.replace(/^#/, ''), count: Math.floor(entry.count) }))
+      .filter(entry => entry.tag.length > 0);
+    if (clean.length > MAX_TAG_INDEX) return { ok: false, id, error: 'TOO_LARGE' };
+    const data = { tags: clean, total: clean.length };
+    if (byteLength(JSON.stringify(data)) > MAX_TAG_SNAPSHOT_BYTES) return { ok: false, id, error: 'TOO_LARGE' };
+    if (!isEnabled()) return { ok: false, id, error: 'OFFLINE' };
+    return { ok: true, id, data };
+  }
+
+  if (cmd === 'GET_FOLDER_TREE') {
+    if (!adapter.folderTree) return { ok: false, id, error: 'BAD_REQUEST' };
+    let folders: Array<{ path: string; count: number }>;
+    try {
+      folders = adapter.folderTree()
+        .filter(entry => entry && typeof entry.path === 'string' && (entry.path === '' || validVaultPath(entry.path)))
+        .map(entry => ({ path: entry.path, count: Math.max(0, Math.floor(Number(entry.count) || 0)) }));
+    } catch { return { ok: false, id, error: 'RENDER_FAILED' }; }
+    if (folders.length > MAX_TREE_ENTRIES) return { ok: false, id, error: 'TOO_LARGE' };
+    const data = { folders, total: folders.length };
+    if (byteLength(JSON.stringify(data)) > MAX_TREE_SNAPSHOT_BYTES) return { ok: false, id, error: 'TOO_LARGE' };
+    if (!isEnabled()) return { ok: false, id, error: 'OFFLINE' };
+    return { ok: true, id, data };
+  }
+
+  if (cmd === 'GET_PATHS') {
+    // Every note path in pages, so the quick switcher can search the whole vault rather than the
+    // folders that happen to have been opened. The cursor is a digest of the listing, as on the tree:
+    // a vault that changed between pages says so instead of silently shifting.
+    let paths: string[];
+    try { paths = adapter.listMarkdown().filter(file => validMarkdownPath(file.path)).map(file => file.path).sort(); }
+    catch { return { ok: false, id, error: 'RENDER_FAILED' }; }
+    if (paths.length > MAX_TREE_ENTRIES) return { ok: false, id, error: 'TOO_LARGE' };
+    let digest: ArrayBuffer;
+    try { digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(JSON.stringify(paths))); }
+    catch { return { ok: false, id, error: 'RENDER_FAILED' }; }
+    const revision = Array.from(new Uint8Array(digest).slice(0, 16), byte => byte.toString(16).padStart(2, '0')).join('');
+    const cursor = obj.cursor as string | undefined;
+    if (cursor && !cursor.startsWith(`${revision}:`)) return { ok: false, id, error: 'STALE_CURSOR' };
+    const offset = cursor ? Number(cursor.slice(33)) : 0;
+    if (!Number.isSafeInteger(offset) || offset < 0 || (cursor && offset >= paths.length)) {
+      return { ok: false, id, error: 'BAD_REQUEST' };
+    }
+    const page = paths.slice(offset, offset + PATHS_PAGE_SIZE);
+    const nextOffset = offset + page.length;
+    if (!isEnabled()) return { ok: false, id, error: 'OFFLINE' };
+    return { ok: true, id, data: { paths: page, total: paths.length,
+      nextCursor: nextOffset < paths.length ? `${revision}:${nextOffset}` : null } };
+  }
+
+  if (cmd === 'GET_NOTES_WITH_TAG') {
+    if (!adapter.notesWithTag) return { ok: false, id, error: 'BAD_REQUEST' };
+    const tag = typeof obj.path === 'string' ? obj.path.replace(/^#/, '').trim() : '';
+    if (!tag || tag.length > 128 || hasControlCharacter(tag)) return { ok: false, id, error: 'BAD_REQUEST' };
+    let paths: string[];
+    try { paths = adapter.notesWithTag(tag).filter(path => validMarkdownPath(path)).sort(); }
+    catch { return { ok: false, id, error: 'RENDER_FAILED' }; }
+    if (paths.length > MAX_NOTES_WITH_TAG) return { ok: false, id, error: 'TOO_LARGE' };
+    if (byteLength(JSON.stringify(paths)) > MAX_PREVIEW_BYTES) return { ok: false, id, error: 'TOO_LARGE' };
+    if (!isEnabled()) return { ok: false, id, error: 'OFFLINE' };
+    return { ok: true, id, data: { tag, paths, total: paths.length } };
+  }
+
   if (cmd === 'LIST_VAULT_TREE_PAGE') {
     let entries: { kind: 'file' | 'folder'; path: string }[];
     // A folder-scoped page is one folder's children: the browser expands a folder and asks for
@@ -399,7 +500,24 @@ export async function dispatchVaultRequest(adapter: VaultAdapter, access: Access
       entries = [
         ...adapter.listMarkdown().filter(file => validMarkdownPath(file.path))
           .filter(file => folder === undefined || parentOf(file.path) === folder)
-          .map(file => ({ kind: 'file' as const, path: file.path })),
+          .map(file => {
+            // The tags ride along with the entry: the browser then knows a note's tags exactly when
+            // it learns the note exists, instead of paging the whole vault again to find out.
+            const own = adapter.tagIndex ? adapter.tags(file) : [];
+            const tags = [...new Set(own.map(tag => tag.replace(/^#/, '').trim()).filter(Boolean))]
+              .slice(0, MAX_TREE_TAGS_PER_FILE);
+            // Title and modification time ride along so the browser can show a note's real name and
+            // sort by when it changed, without a second request per note.
+            const meta = adapter.fileMeta ? adapter.fileMeta(file) : {};
+            const title = typeof meta.title === 'string' && meta.title.trim() ? meta.title.trim().slice(0, 200) : undefined;
+            const mtime = typeof meta.mtime === 'number' && Number.isFinite(meta.mtime) ? Math.floor(meta.mtime) : undefined;
+            const entry: { kind: 'file'; path: string; tags?: string[]; title?: string; mtime?: number } =
+              { kind: 'file', path: file.path };
+            if (tags.length) entry.tags = tags;
+            if (title) entry.title = title;
+            if (mtime) entry.mtime = mtime;
+            return entry;
+          }),
         ...adapter.listFolders().filter(validVaultPath)
           .filter(path => folder === undefined || parentOf(path) === folder)
           .map(path => ({ kind: 'folder' as const, path })),
@@ -508,13 +626,22 @@ export async function dispatchVaultRequest(adapter: VaultAdapter, access: Access
       outgoing = visibleMarkdownLinks(adapter, adapter.outgoing(file)).filter(target => target !== path);
     } catch { return { ok: false, id, error: 'RENDER_FAILED' }; }
     if (!isEnabled()) return { ok: false, id, error: 'OFFLINE' };
-    const nodes = [path, ...new Set([...incoming, ...outgoing])];
-    if (nodes.length > MAX_GRAPH_NEIGHBORS + 1 || incoming.length + outgoing.length > MAX_GRAPH_NEIGHBORS * 2) {
-      return { ok: false, id, error: 'TOO_LARGE' };
-    }
+    // A hub note — an index, a daily entry, a project map — has more than a hundred connections, and
+    // refusing the graph there is a wrong answer at the one place it is most useful. Keep the most
+    // connected hundred and say how many were left out.
+    const degree = adapter.linkCounts ? adapter.linkCounts([path, ...incoming, ...outgoing]) : {};
+    const neighbours = [...new Set([...incoming, ...outgoing])]
+      .sort((a, b) => (degree[b] ?? 0) - (degree[a] ?? 0) || (a < b ? -1 : a > b ? 1 : 0));
+    const kept = neighbours.slice(0, MAX_GRAPH_NEIGHBORS);
+    const keptSet = new Set(kept);
     const edges = [...incoming.map(source => ({ from: source, to: path })),
-      ...outgoing.map(target => ({ from: path, to: target }))];
-    const data = { center: path, nodes, edges };
+      ...outgoing.map(target => ({ from: path, to: target }))]
+      .filter(edge => keptSet.has(edge.from === path ? edge.to : edge.from));
+    const tags = adapter.tagIndex ? [...new Set(adapter.tags(file).map(tag => tag.replace(/^#/, '').trim())
+      .filter(Boolean))].slice(0, MAX_TREE_TAGS_PER_FILE) : [];
+    // Shape is additive: `nodes` stays a list of paths, so an older browser is unaffected.
+    const data = { center: path, nodes: [path, ...kept], edges, degree,
+      tags, omitted: Math.max(0, neighbours.length - kept.length) };
     if (byteLength(JSON.stringify(data)) > MAX_PREVIEW_BYTES) return { ok: false, id, error: 'TOO_LARGE' };
     return { ok: true, id, data };
   }
