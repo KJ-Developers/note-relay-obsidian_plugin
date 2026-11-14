@@ -18,10 +18,6 @@ Note Relay connects a browser to the vault running on your desktop. A Dataview t
 
 ## Foundational guarantees
 
-<img src="images/guarantees.jpg" width="730" alt="Three cards: nothing uploaded, an end-to-end encrypted WebRTC data channel, and your vault's own theme, backlinks, tags and Dataview results.">
-
-*Three guarantees, in the same order as the table below.*
-
 | Nothing uploaded — your vault stays yours | End-to-end encrypted channel | Your vault does the rendering |
 | --- | --- | --- |
 | Data stays on your computer's filesystem. There is no secondary database, no synced bucket and no central backup. | Keys are negotiated between the browser and the vault. A relay only ever carries packets it cannot read. | Dataview, maths, Mermaid and your theme are computed by Obsidian. The browser receives finished, sanitised output. |

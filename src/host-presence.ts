@@ -80,7 +80,10 @@ export class HostPresenceClient {
         return;
       }
     } catch { /* The previous short lease expires without a successful renewal. */ }
-    if (this.active) this.timer = setTimer(() => { this.current = this.renew(); }, 25_000);
+    // 60 s against a 150 s lease. The old 25 s was 25,344 Durable Object requests a month for a host
+    // that is online all day — the single largest metered cost in the product, spent proving liveness
+    // nobody was waiting for. Three missed renewals are now tolerated instead of two.
+    if (this.active) this.timer = setTimer(() => { this.current = this.renew(); }, 60_000);
   }
 
   async stop(): Promise<void> {

@@ -83,14 +83,20 @@ export class ObsidianAdapter implements WritableVaultAdapter {
     return out.sort((a, b) => b.count - a.count || (a.tag < b.tag ? -1 : a.tag > b.tag ? 1 : 0));
   }
 
-  /** Every note carrying one tag, from the same index. */
+  /**
+   * Every note carrying one tag **or any tag beneath it**.
+   *
+   * Obsidian's tags are hierarchical: a note tagged `scope/a/agent-zero` is part of `scope/a`, which is
+   * what the tree's rolled-up count already promises. Matching only the exact string made a parent row
+   * claim 306 notes and then answer "No matching notes" when it was selected.
+   */
   notesWithTag(tag: string): string[] {
     const target = tag.replace(/^#/, '').trim().toLowerCase();
     if (!target) return [];
     const out: string[] = [];
     for (const file of this.app.vault.getMarkdownFiles()) {
       const own = this.tags(file).map(value => value.replace(/^#/, '').trim().toLowerCase());
-      if (own.includes(target)) out.push(file.path);
+      if (own.some(value => value === target || value.startsWith(`${target}/`))) out.push(file.path);
     }
     return out.sort();
   }

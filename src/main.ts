@@ -324,8 +324,20 @@ export default class NoteRelayPlugin extends Plugin {
     void this.checkForUpdate();
     this.registerInterval(window.setInterval(() => void this.checkForUpdate(), 6 * 60 * 60 * 1000));
     this.registerInterval(window.setInterval(() => this.setStatus(), 5_000));
-    void this.loadData().then(saved => {
-      this.binding = parseBinding((saved as { account?: unknown } | null)?.account);
+    void this.loadData().then(async saved => {
+      const data = (saved ?? {}) as { account?: unknown; hostingEnabled?: unknown };
+      this.binding = parseBinding(data.account);
+      // Only an explicit saved choice is honoured, and only for a vault that is still paired: a fresh
+      // install has no such key, so hosting still starts off and nothing is opened unasked.
+      if (data.hostingEnabled !== true || this.host.enabled) return;
+      try {
+        const vaultId = await this.pairingVaultId();
+        if (!vaultId || this.host.enabled) return;
+      } catch { return; }
+      this.host.start();
+      this.remoteStatus = null;
+      void this.startRemotePresence();
+      this.setStatus();
     });
     this.addSettingTab(new NoteRelaySettingsTab(this.app, this));
     this.addRibbonIcon('power', 'Toggle Note Relay local hosting', () => this.toggleHost());
@@ -657,6 +669,11 @@ export default class NoteRelayPlugin extends Plugin {
       this.remoteStatus = null;
       void this.startRemotePresence();
     }
+    // Remember the owner's own choice. Hosting lives in memory, so an update, a reload or a crash came
+    // back with the relay off — a setting the owner had turned on silently turned itself off, which is
+    // the opposite of what "remembered settings" means. A fresh install has no saved choice and still
+    // starts off.
+    void this.savePluginData({ hostingEnabled: this.hostEnabled });
     this.setStatus();
     new Notice(this.hostEnabled ? 'Note Relay read host on; remote presence is verified separately' : 'Note Relay read host off');
   }

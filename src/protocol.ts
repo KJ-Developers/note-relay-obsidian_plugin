@@ -480,6 +480,8 @@ export async function dispatchVaultRequest(adapter: VaultAdapter, access: Access
     if (!adapter.notesWithTag) return { ok: false, id, error: 'BAD_REQUEST' };
     const tag = typeof obj.path === 'string' ? obj.path.replace(/^#/, '').trim() : '';
     if (!tag || tag.length > 128 || hasControlCharacter(tag)) return { ok: false, id, error: 'BAD_REQUEST' };
+    // The adapter decides what "carries this tag" means — including nested tags beneath it — because
+    // only it can see the vault's hierarchy. The protocol only bounds the answer.
     let paths: string[];
     try { paths = adapter.notesWithTag(tag).filter(path => validMarkdownPath(path)).sort(); }
     catch { return { ok: false, id, error: 'RENDER_FAILED' }; }
