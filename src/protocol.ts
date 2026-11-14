@@ -31,6 +31,8 @@ export const MAX_PREVIEW_BYTES = 512 * 1024;
 export const MAX_RASTER_BYTES = 256 * 1024;
 /** An original, for a download. Base64 of this must still fit inside MAX_REPLY_BYTES. */
 export const FULL_RASTER_BYTES = 1400 * 1024;
+/** How much of an image one reply carries. Base64 of this stays well inside a framed reply. */
+export const RASTER_CHUNK_BYTES = 512 * 1024;
 export const TREE_PAGE_SIZE = 200;
 export const TAG_PAGE_SIZE = 200;
 /**
@@ -100,6 +102,15 @@ export interface VaultAdapter {
    * which is what every host did before images were capped.
    */
   rasterForDisplay?(path: string, full: boolean): Promise<{ bytes: Uint8Array; mime: string; capped: boolean } | null>;
+  /**
+   * One slice of an image, with the hash of the whole thing.
+   *
+   * Chunking exists because a framed reply tops out near 1.4 MB of original, and a phone photo is
+   * bigger than that. The host reads the file once and serves slices, so a 20 MB download is one read
+   * and forty cheap replies rather than forty reads.
+   */
+  rasterPage?(path: string, options: { full: boolean; offset: number; limit: number }): Promise<
+    { bytes: Uint8Array; mime: string; capped: boolean; size: number; hash: string; offset: number } | null>;
   listFolders(): string[];
   tags(file: FileRef): string[];
   /**
@@ -351,7 +362,7 @@ export async function dispatchVaultRequest(adapter: VaultAdapter, access: Access
   const permitted = isWrite ? writeFields[cmd as WriteCommand] :
     cmd === 'SEARCH_NOTES' ? ['version', 'id', 'cmd', 'query', 'limit'] :
     // READ_RASTER alone takes `full`: the original bytes, for a download.
-    cmd === 'READ_RASTER' ? ['version', 'id', 'cmd', 'path', 'full'] :
+    cmd === 'READ_RASTER' ? ['version', 'id', 'cmd', 'path', 'full', 'offset'] :
     pathCommands.has(cmd) ? ['version', 'id', 'cmd', 'path'] :
     // `path` on the tree page is the folder whose children are wanted: '' is the vault root.
     // Additive — an older browser sends no path and still gets the flat walk it expects.
@@ -674,6 +685,23 @@ export async function dispatchVaultRequest(adapter: VaultAdapter, access: Access
     // gets the display size: the reader cannot tell the difference at 900 px, and the original can be
     // several megabytes of somebody's phone camera.
     const full = obj.full === true;
+    if (adapter.rasterPage) {
+      const offset = typeof obj.offset === 'number' && Number.isSafeInteger(obj.offset) && obj.offset >= 0
+        ? obj.offset : 0;
+      const limit = full ? FULL_RASTER_BYTES : MAX_RASTER_BYTES;
+      const page = await adapter.rasterPage(path, { full, offset, limit: RASTER_CHUNK_BYTES });
+      if (!isEnabled()) return { ok: false, id, error: 'OFFLINE' };
+      if (!page) return { ok: false, id, error: 'TOO_LARGE' };
+      if (page.bytes.length > limit) return { ok: false, id, error: 'TOO_LARGE' };
+      // Only the first slice starts at a file header; a later one is the middle of an image and would
+      // fail a signature check by construction.
+      if (page.offset === 0 && !matchesRasterSignature(page.bytes, page.mime)) return { ok: false, id, error: 'FORBIDDEN' };
+      // `size` and `hash` describe the whole image, so a client knows what it is assembling and can
+      // keep a cache entry keyed by content rather than by path.
+      return { ok: true, id, data: { path, mime: page.mime, capped: page.capped,
+        size: page.size, hash: page.hash, offset: page.offset,
+        base64: toBase64(page.bytes) } };
+    }
     const limit = full ? FULL_RASTER_BYTES : MAX_RASTER_BYTES;
     if (adapter.rasterForDisplay) {
       const shown = await adapter.rasterForDisplay(path, full);

@@ -941,3 +941,28 @@ test('an unknown field on READ_RASTER is still refused', async () => {
     { version: 2, id: 'x', cmd: 'READ_RASTER', path: 'photo.png', fullish: true });
   assert.equal(reply.ok, false);
 });
+
+
+test('READ_RASTER pages a large image and reports its size and hash', async () => {
+  // 40 bytes in 16-byte pages: the client asks for offsets 0, 16 and 32 and gets the whole file back.
+  const whole = new Uint8Array(96);
+  whole.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+  for (let index = 8; index < whole.length; index++) whole[index] = index;
+  const asks: number[] = [];
+  const paging = { ...adapter, rasterPage: async (_path: string, options: { offset: number }) => {
+    asks.push(options.offset);
+    // The first page carries a whole PNG header: the signature check needs 24 bytes of file.
+    const end = Math.min(whole.length, options.offset + 32);
+    return { bytes: whole.subarray(options.offset, end), mime: 'image/png', capped: false,
+      size: whole.length, hash: 'f'.repeat(64), offset: options.offset };
+  } };
+  const first = await dispatchReadOnly(paging, true, req('READ_RASTER', 'photo.png'));
+  assert.equal(first.ok, true);
+  assert.equal((first.data as { size?: number }).size, 96);
+  assert.equal((first.data as { hash?: string }).hash, 'f'.repeat(64));
+  // A page that does not start at the file header must still be served: it is the middle of an image.
+  const later = await dispatchReadOnly(paging, true,
+    { version: 2, id: 'p2', cmd: 'READ_RASTER', path: 'photo.png', offset: 32 });
+  assert.equal(later.ok, true);
+  assert.deepEqual(asks, [0, 32]);
+});

@@ -3,7 +3,7 @@ import { renderStaticPreview } from './preview';
 import { hasControlCharacter } from './characters';
 import { appearanceColors, appearanceFonts, safeAppearance, safeColor } from './appearance';
 import { DataviewGate } from './dataview-gate';
-import { FULL_RASTER_BYTES, MAX_RASTER_BYTES } from './protocol';
+import { FULL_RASTER_BYTES } from './protocol';
 import type { MermaidRenderer } from './mermaid';
 import { installedDataview } from './dataview-api';
 import { MAX_SEARCH_BYTES, MAX_SEARCH_RESULTS, YIELD_EVERY, matchNote, parseQuery, rankMatches,
@@ -40,6 +40,9 @@ export class ObsidianAdapter implements WritableVaultAdapter {
   private readonly dataview = new DataviewGate();
   /** Mermaid comes from Obsidian's own bundled renderer; see `mermaid.ts` for why. */
   private mermaid: MermaidRenderer = async () => null;
+  /** Images currently being paged to a client, so a download is one disk read and not forty. */
+  private rasterBuffers = new Map<string, { bytes: Uint8Array; mime: string; capped: boolean;
+    hash: string; at: number }>();
 
   constructor(private app: App) {}
 
@@ -371,6 +374,35 @@ export class ObsidianAdapter implements WritableVaultAdapter {
   }
 
   /**
+   * One slice of an image, read once and held while the client pages through it.
+   *
+   * `vault.readBinary` for every 512 KB slice of a 20 MB photo is forty reads of the whole file; the
+   * buffer below makes it one. It is dropped after a minute of no requests, so a download that is
+   * abandoned does not pin a photo in memory.
+   */
+  async rasterPage(path: string, options: { full: boolean; offset: number; limit: number }): Promise<
+    { bytes: Uint8Array; mime: string; capped: boolean; size: number; hash: string; offset: number } | null> {
+    const key = `${options.full ? 'full' : 'display'}:${path}`;
+    const now = Date.now();
+    for (const [stale, entry] of this.rasterBuffers) {
+      if (now - entry.at > RASTER_BUFFER_IDLE_MS) this.rasterBuffers.delete(stale);
+    }
+    let held = this.rasterBuffers.get(key);
+    if (!held) {
+      const shown = await this.rasterForDisplay(path, options.full);
+      if (!shown) return null;
+      held = { ...shown, hash: await sha256Bytes(shown.bytes), at: now };
+      this.rasterBuffers.set(key, held);
+    }
+    held.at = now;
+    const size = held.bytes.length;
+    const start = Math.min(Math.max(0, options.offset), Math.max(0, size - 1));
+    const end = Math.min(size, start + Math.max(1, options.limit));
+    return { bytes: held.bytes.subarray(start, end), mime: held.mime, capped: held.capped,
+      size, hash: held.hash, offset: start };
+  }
+
+  /**
    * An image at reading size, or the original when asked for it.
    *
    * A 3 MB phone photo looks identical at 900 px wide, and shipping it whole is the single largest
@@ -457,4 +489,13 @@ async function downscale(bytes: Uint8Array, mime: string): Promise<{ bytes: Uint
     const encoded = await canvas.convertToBlob({ type: 'image/webp', quality: 0.82 });
     return { bytes: new Uint8Array(await encoded.arrayBuffer()), mime: 'image/webp' };
   } catch { return null; }
+}
+
+
+/** A buffer is held for this long after its last request, so an abandoned download frees its memory. */
+const RASTER_BUFFER_IDLE_MS = 60_000;
+
+async function sha256Bytes(bytes: Uint8Array): Promise<string> {
+  const digest = await crypto.subtle.digest('SHA-256', bytes.slice().buffer);
+  return [...new Uint8Array(digest)].map(byte => byte.toString(16).padStart(2, '0')).join('');
 }
