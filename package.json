@@ -1,6 +1,6 @@
 {
   "name": "noterelay-plugin",
-  "version": "0.2.13",
+  "version": "0.2.14",
   "description": "Note Relay Obsidian plugin: read and edit a vault from a browser over an authenticated WebRTC channel.",
   "license": "MIT",
   "private": true,
