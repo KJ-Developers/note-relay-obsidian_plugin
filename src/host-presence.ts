@@ -80,10 +80,11 @@ export class HostPresenceClient {
         return;
       }
     } catch { /* The previous short lease expires without a successful renewal. */ }
-    // 60 s against a 150 s lease. The old 25 s was 25,344 Durable Object requests a month for a host
-    // that is online all day — the single largest metered cost in the product, spent proving liveness
-    // nobody was waiting for. Three missed renewals are now tolerated instead of two.
-    if (this.active) this.timer = setTimer(() => { this.current = this.renew(); }, 60_000);
+    // 5 min against a 600 s lease. Each renewal is a billed Durable Object request, and at 60 s a host
+    // online all day spent 43,200 of a 1,000,000 monthly allowance simply proving it was still there.
+    // The lease tolerates one missed renewal; a socket closing is what ends a live session, so a stale
+    // "online" here costs a failed connect attempt rather than a wrong answer.
+    if (this.active) this.timer = setTimer(() => { this.current = this.renew(); }, 300_000);
   }
 
   async stop(): Promise<void> {
