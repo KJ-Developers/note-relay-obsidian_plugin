@@ -3,6 +3,7 @@ import { renderStaticPreview } from './preview';
 import { hasControlCharacter } from './characters';
 import { appearanceColors, appearanceFonts, safeAppearance, safeColor } from './appearance';
 import { DataviewGate } from './dataview-gate';
+import { FULL_RASTER_BYTES, MAX_RASTER_BYTES } from './protocol';
 import type { MermaidRenderer } from './mermaid';
 import { installedDataview } from './dataview-api';
 import { MAX_SEARCH_BYTES, MAX_SEARCH_RESULTS, YIELD_EVERY, matchNote, parseQuery, rankMatches,
@@ -359,21 +360,41 @@ export class ObsidianAdapter implements WritableVaultAdapter {
    * the bytes are encoded. An SVG is refused outright because it is a scriptable document, and the
    * preview frame is the one place note content becomes markup.
    */
-  private async inlineImage(path: string): Promise<{ mime: string; base64: string } | null> {
+  private async inlineImage(path: string): Promise<{ mime: string; base64: string; capped?: boolean } | null> {
+    const shown = await this.rasterForDisplay(path, false);
+    if (!shown) return null;
+    let binary = '';
+    for (let offset = 0; offset < shown.bytes.length; offset += 8192) {
+      binary += String.fromCharCode(...shown.bytes.subarray(offset, offset + 8192));
+    }
+    return { mime: shown.mime, base64: btoa(binary), ...(shown.capped ? { capped: true } : {}) };
+  }
+
+  /**
+   * An image at reading size, or the original when asked for it.
+   *
+   * A 3 MB phone photo looks identical at 900 px wide, and shipping it whole is the single largest
+   * thing this product sends. Above the inline budget the bytes are re-encoded to WebP at 1600 px on
+   * the long edge; `full` returns the file untouched, which is what a download is.
+   */
+  async rasterForDisplay(path: string, full: boolean): Promise<{ bytes: Uint8Array; mime: string; capped: boolean } | null> {
     const extension = path.split('.').pop()?.toLowerCase() ?? '';
     const mime = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg',
       gif: 'image/gif', webp: 'image/webp' }[extension];
     if (!mime || !validVaultPath(path) || path.includes('..')) return null;
     const actual = this.app.vault.getAbstractFileByPath(path);
-    if (!(actual instanceof TFile) || actual.stat.size > 256 * 1024) return null;
+    // A download is allowed to be larger than a display copy; both still fit a framed reply. The
+    // display path accepts a big source file on purpose — a 3 MB phone photo is exactly the case this
+    // exists for, and it leaves here as a ~60 KB WebP.
+    const limit = full ? FULL_RASTER_BYTES : MAX_SOURCE_RASTER_BYTES;
+    if (!(actual instanceof TFile) || actual.stat.size > limit) return null;
     try {
       const bytes = new Uint8Array(await this.app.vault.readBinary(actual));
       if (!matchesRasterSignature(bytes, mime)) return null;
-      let binary = '';
-      for (let offset = 0; offset < bytes.length; offset += 8192) {
-        binary += String.fromCharCode(...bytes.subarray(offset, offset + 8192));
-      }
-      return { mime, base64: btoa(binary) };
+      if (full || mime === 'image/gif' || bytes.length <= INLINE_RASTER_BUDGET) return { bytes, mime, capped: false };
+      const smaller = await downscale(bytes, mime);
+      if (!smaller || smaller.bytes.length >= bytes.length) return { bytes, mime, capped: false };
+      return { bytes: smaller.bytes, mime: smaller.mime, capped: true };
     } catch { return null; }
   }
 
@@ -405,4 +426,35 @@ export class ObsidianAdapter implements WritableVaultAdapter {
     for (const name of appearanceFonts) tokens[name] = styles.getPropertyValue(name);
     return safeAppearance({ mode: activeDocument.body.classList.contains('theme-dark') ? 'dark' : 'light', tokens });
   }
+}
+
+
+/** The largest source image the display path will read before shrinking it. */
+const MAX_SOURCE_RASTER_BYTES = 8 * 1024 * 1024;
+
+/** Above this, an inline image is re-encoded before it travels. */
+const INLINE_RASTER_BUDGET = 64 * 1024;
+const INLINE_RASTER_MAX_EDGE = 1600;
+
+/**
+ * Re-encode an image to WebP at a readable size.
+ *
+ * Returns null when the platform cannot do it (no `createImageBitmap`/`OffscreenCanvas`), in which case
+ * the caller sends the original: a plugin that cannot shrink an image must still show it.
+ */
+async function downscale(bytes: Uint8Array, mime: string): Promise<{ bytes: Uint8Array; mime: string } | null> {
+  if (typeof createImageBitmap !== 'function' || typeof OffscreenCanvas !== 'function') return null;
+  try {
+    const blob = new Blob([bytes.slice().buffer], { type: mime });
+    const bitmap = await createImageBitmap(blob);
+    const scale = Math.min(1, INLINE_RASTER_MAX_EDGE / Math.max(bitmap.width, bitmap.height));
+    if (scale >= 1) { bitmap.close(); return null; }
+    const canvas = new OffscreenCanvas(Math.round(bitmap.width * scale), Math.round(bitmap.height * scale));
+    const context = canvas.getContext('2d');
+    if (!context) { bitmap.close(); return null; }
+    context.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+    bitmap.close();
+    const encoded = await canvas.convertToBlob({ type: 'image/webp', quality: 0.82 });
+    return { bytes: new Uint8Array(await encoded.arrayBuffer()), mime: 'image/webp' };
+  } catch { return null; }
 }

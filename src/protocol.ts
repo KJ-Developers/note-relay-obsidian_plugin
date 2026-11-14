@@ -29,6 +29,8 @@ export const MAX_WRITE_REQUEST_BYTES = 64 * 1024;
 export const MAX_WRITE_NOTE_BYTES = 60 * 1024;
 export const MAX_PREVIEW_BYTES = 512 * 1024;
 export const MAX_RASTER_BYTES = 256 * 1024;
+/** An original, for a download. Base64 of this must still fit inside MAX_REPLY_BYTES. */
+export const FULL_RASTER_BYTES = 1400 * 1024;
 export const TREE_PAGE_SIZE = 200;
 export const TAG_PAGE_SIZE = 200;
 /**
@@ -91,6 +93,13 @@ export type WriteOutcome = 'ok' | 'conflict' | 'exists' | 'missing';
 
 export interface VaultAdapter {
   listMarkdown(): FileRef[];
+  /**
+   * Display-sized bytes for an image, or the original when `full` is asked for.
+   *
+   * Optional: an adapter without it still answers READ_RASTER from `readBinary`, just at full size,
+   * which is what every host did before images were capped.
+   */
+  rasterForDisplay?(path: string, full: boolean): Promise<{ bytes: Uint8Array; mime: string; capped: boolean } | null>;
   listFolders(): string[];
   tags(file: FileRef): string[];
   /**
@@ -341,6 +350,8 @@ export async function dispatchVaultRequest(adapter: VaultAdapter, access: Access
   const isWrite = writeCommands.has(cmd as WriteCommand);
   const permitted = isWrite ? writeFields[cmd as WriteCommand] :
     cmd === 'SEARCH_NOTES' ? ['version', 'id', 'cmd', 'query', 'limit'] :
+    // READ_RASTER alone takes `full`: the original bytes, for a download.
+    cmd === 'READ_RASTER' ? ['version', 'id', 'cmd', 'path', 'full'] :
     pathCommands.has(cmd) ? ['version', 'id', 'cmd', 'path'] :
     // `path` on the tree page is the folder whose children are wanted: '' is the vault root.
     // Additive — an older browser sends no path and still gets the flat walk it expects.
@@ -659,10 +670,24 @@ export async function dispatchVaultRequest(adapter: VaultAdapter, access: Access
   if (cmd === 'READ_RASTER') {
     const mime = rasterMime(path);
     if (!mime || rasterMime(`x.${file.extension}`) !== mime) return { ok: false, id, error: 'FORBIDDEN' };
+    // `full` asks for the file as it sits in the vault, which is what a download needs. Anything else
+    // gets the display size: the reader cannot tell the difference at 900 px, and the original can be
+    // several megabytes of somebody's phone camera.
+    const full = obj.full === true;
+    const limit = full ? FULL_RASTER_BYTES : MAX_RASTER_BYTES;
+    if (adapter.rasterForDisplay) {
+      const shown = await adapter.rasterForDisplay(path, full);
+      if (!isEnabled()) return { ok: false, id, error: 'OFFLINE' };
+      if (!shown) return { ok: false, id, error: 'TOO_LARGE' };
+      if (shown.bytes.length > limit) return { ok: false, id, error: 'TOO_LARGE' };
+      if (!matchesRasterSignature(shown.bytes, shown.mime)) return { ok: false, id, error: 'FORBIDDEN' };
+      return { ok: true, id, data: { path, mime: shown.mime, capped: shown.capped,
+        base64: toBase64(shown.bytes) } };
+    }
     let binary: ArrayBuffer;
     try { binary = await adapter.readBinary(file); } catch { return { ok: false, id, error: 'NOT_FOUND' }; }
     if (!isEnabled()) return { ok: false, id, error: 'OFFLINE' };
-    if (!(binary instanceof ArrayBuffer) || binary.byteLength > MAX_RASTER_BYTES) return { ok: false, id, error: 'TOO_LARGE' };
+    if (!(binary instanceof ArrayBuffer) || binary.byteLength > limit) return { ok: false, id, error: 'TOO_LARGE' };
     const bytes = new Uint8Array(binary);
     if (!matchesRasterSignature(bytes, mime)) return { ok: false, id, error: 'FORBIDDEN' };
     return { ok: true, id, data: { path, mime, base64: toBase64(bytes) } };

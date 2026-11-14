@@ -17,7 +17,8 @@ const adapter: VaultAdapter = {
   listFolders: () => ['Projects', 'Projects/Empty', '.obsidian/Hidden'],
   tags: file => file.path === 'Welcome.md' ? ['#project/notes'] : [],
   backlinks: () => [], outgoing: () => [],
-  getFile: path => path === 'Welcome.md' ? { path, extension: 'md' } : null,
+  getFile: path => path === 'Welcome.md' ? { path, extension: 'md' }
+    : path === 'photo.png' ? { path, extension: 'png' } : null,
   read: async () => { reads++; return source; },
   readBinary: async () => new ArrayBuffer(0),
   preview: async () => { previews++; return { html: '<h1>Fixture</h1>', state: 'complete', renderer: 'test' }; },
@@ -911,4 +912,32 @@ test('a folder page carries each note\'s tags, so membership arrives with the tr
     assert.deepEqual(entries.filter(entry => entry.kind === 'file'),
       [{ kind: 'file', path: 'Notes/000.md', tags: ['area/work', 'nested/tag'] }]);
   }
+});
+
+
+test('READ_RASTER returns the display copy, and the original only when asked', async () => {
+  // A host that can resize: the display reply is small and marked capped, `full` is the file itself.
+  // A real PNG header: the signature check needs the magic and 24 bytes of file, not a stand-in.
+  const bytes = new Uint8Array(32);
+  bytes.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+  const seen: boolean[] = [];
+  const resizing = { ...adapter,
+    rasterForDisplay: async (_path: string, full: boolean) => {
+      seen.push(full);
+      return { bytes, mime: 'image/png', capped: !full };
+    } };
+  const display = await dispatchReadOnly(resizing, true, req('READ_RASTER', 'photo.png'));
+  assert.equal(display.ok, true);
+  assert.equal((display.data as { capped?: boolean }).capped, true);
+  const original = await dispatchReadOnly(resizing, true,
+    { version: 2, id: 'test-1', cmd: 'READ_RASTER', path: 'photo.png', full: true });
+  assert.equal(original.ok, true);
+  assert.equal((original.data as { capped?: boolean }).capped, false);
+  assert.deepEqual(seen, [false, true]);
+});
+
+test('an unknown field on READ_RASTER is still refused', async () => {
+  const reply = await dispatchReadOnly(adapter, true,
+    { version: 2, id: 'x', cmd: 'READ_RASTER', path: 'photo.png', fullish: true });
+  assert.equal(reply.ok, false);
 });

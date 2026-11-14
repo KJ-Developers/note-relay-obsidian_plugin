@@ -60,7 +60,7 @@ const MAX_INLINE_IMAGES = 20;
  * Resolves a vault-relative image reference to a data URL, or null to leave a placeholder.
  * Supplied by the adapter, which owns vault access; absent in tests and for static Dataview results.
  */
-export type ImageResolver = (src: string) => Promise<{ mime: string; base64: string } | null>;
+export type ImageResolver = (src: string) => Promise<{ mime: string; base64: string; capped?: boolean } | null>;
 
 /** Obsidian callout kinds. A closed set, so a class name can never be author-controlled. */
 const CALLOUT_TYPES = new Set(['abstract', 'bug', 'caution', 'danger', 'error', 'example', 'failure',
@@ -83,7 +83,12 @@ markdown.renderer.rules.nr_image = (tokens, index) => {
   const src = String(token.attrGet('src') ?? '');
   const alt = String(token.attrGet('alt') ?? '');
   if (!src.startsWith('data:image/')) return escapeHtml(alt);
-  return `<img src="${src}" alt="${escapeHtml(alt)}" loading="lazy">`;
+  const original = String(token.attrGet('data-nr-original') ?? '');
+  const image = `<img src="${src}" alt="${escapeHtml(alt)}" loading="lazy">`;
+  if (!original) return image;
+  // Shown at reading size; the original is one deliberate click, and bytes only move when it is taken.
+  return `<figure class="nr-figure">${image}<a class="nr-download" href="#" ` +
+    `data-nr-raster="${escapeHtml(original)}">Download full size</a></figure>`;
 };
 
 function escapeHtml(value: string): string {
@@ -307,6 +312,7 @@ function sanitizeHtmlOnly(html: string): string {
   const safe = DOMPurify.sanitize(html, {
     ALLOWED_TAGS: tags,
     ALLOWED_ATTR: ['class', 'colspan', 'rowspan', 'href', 'data-note-target', 'data-tag-target',
+      'data-nr-raster', 'data-nr-original',
       'src', 'alt', ...MATHML_ATTRS],
     ALLOW_DATA_ATTR: false,
     ALLOW_ARIA_ATTR: false,
@@ -420,10 +426,13 @@ async function resolveImages(tokens: ReturnType<typeof markdown.parse>, originFi
       const relative = raw.startsWith('/') ? raw.slice(1) : `${folder}${raw}`;
       const allowed = !raw.includes('://') && !!IMAGE_MIME[extension] && resolved < MAX_INLINE_IMAGES;
       const image = allowed ? await resolve(relative) : null;
-      if (image && image.mime === IMAGE_MIME[extension]) {
+      if (image && (image.mime === IMAGE_MIME[extension] || image.capped)) {
         child.type = 'nr_image';
         child.tag = '';
-        child.attrs = [['src', `data:${image.mime};base64,${image.base64}`], ['alt', alt]];
+        // A capped image keeps the path it came from, so the reader can ask for the original as a
+        // download. Nothing else about it changes: it is still a data URL we produced.
+        child.attrs = [['src', `data:${image.mime};base64,${image.base64}`], ['alt', alt],
+          ...(image.capped ? [['data-nr-original', relative] as [string, string]] : [])];
         resolved += 1;
       } else {
         // Keep the reference visible and honest instead of dropping it.
