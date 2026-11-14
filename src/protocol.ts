@@ -4,6 +4,14 @@ import type { SearchReport } from './search';
 import { hasControlCharacter, hasControlCharacterOtherThanLineWhitespace } from './characters';
 
 export const PROTOCOL_VERSION = 2;
+/**
+ * Versions this build answers.
+ *
+ * 1 is the uncompressed framing; 2 is the same protocol with gzipped replies. Accepting both is what
+ * lets an older browser work against this plugin, and it doubles as the capability signal: the reply is
+ * only compressed when the request asked with a version that understands it.
+ */
+export const SUPPORTED_VERSIONS = new Set([1, 2]);
 export const MAX_REQUEST_BYTES = 16 * 1024;
 export const MAX_NOTE_BYTES = 1024 * 1024;
 /**
@@ -325,7 +333,8 @@ export async function dispatchVaultRequest(adapter: VaultAdapter, access: Access
   if (!input || typeof input !== 'object' || Array.isArray(input)) return { ok: false, id: '', error: 'BAD_REQUEST' };
   const obj = input as Record<string, unknown>;
   const id = typeof obj.id === 'string' && /^[A-Za-z0-9_-]{1,64}$/.test(obj.id) ? obj.id : '';
-  if (!id || obj.version !== PROTOCOL_VERSION || typeof obj.cmd !== 'string' || !commands.has(obj.cmd as Command)) {
+  if (!id || typeof obj.version !== 'number' || !SUPPORTED_VERSIONS.has(obj.version) ||
+      typeof obj.cmd !== 'string' || !commands.has(obj.cmd as Command)) {
     return { ok: false, id, error: 'BAD_REQUEST' };
   }
   const cmd = obj.cmd as Command;

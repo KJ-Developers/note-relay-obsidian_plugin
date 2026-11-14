@@ -75,6 +75,11 @@ export class AuthenticatedReadSession {
 
   async send(channel: WritableChannel, input: unknown): Promise<void> {
     const reply = await this.request(input);
-    await sendFramedReply(channel, reply, () => this.authorized(), this.currentHost, this.hostSignal);
+    // A request that speaks version 2 or later understands a compressed reply; anything older gets the
+    // bytes it expects. The version is the capability signal, so no extra handshake is carried.
+    const version = (input as { version?: unknown } | null)?.version;
+    const compress = typeof version === 'number' && version >= 2;
+    await sendFramedReply(channel, reply, () => this.authorized(), this.currentHost,
+      this.hostSignal, compress);
   }
 }

@@ -42,9 +42,9 @@ function waitForSpace(channel: WritableChannel, signal: AbortSignal): Promise<vo
 // while a large reply waits behind a slow receiver.
 export async function sendFramedReply(
   channel: WritableChannel, reply: Reply, allowed: () => boolean,
-  current: () => boolean, signal: AbortSignal,
+  current: () => boolean, signal: AbortSignal, compress = true,
 ): Promise<void> {
-  const frames = await frameReply(reply);
+  const frames = await frameReply(reply, compress);
   for (const frame of frames) {
     if (signal.aborted || !current() || !allowed() || channel.readyState !== 'open') throw new Error('Peer no longer authorized');
     await waitForSpace(channel, signal);

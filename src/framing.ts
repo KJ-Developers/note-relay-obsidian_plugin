@@ -14,13 +14,13 @@ export type ReplyFrame = { id: string; index: number; total: number; payload: st
  * about 7 KB inside a gzip stream. The frame envelope stays JSON text with a `z` marker, so there is one
  * code path and one place to read the bytes; base64 costs its 33%, which gzip's 5–8x covers easily.
  */
-export async function frameReply(reply: Reply): Promise<ReplyFrame[]> {
+export async function frameReply(reply: Reply, compress = true): Promise<ReplyFrame[]> {
   const serialized = JSON.stringify(reply);
   const raw = new TextEncoder().encode(serialized);
   if (raw.length > MAX_REPLY_BYTES) throw new Error('Reply too large');
   let body = serialized;
   let compressed = false;
-  if (raw.length > COMPRESS_ABOVE_BYTES) {
+  if (compress && raw.length > COMPRESS_ABOVE_BYTES) {
     const packed = await gzipBase64(serialized);
     if (packed !== null && packed.length < serialized.length) { body = packed; compressed = true; }
   }
